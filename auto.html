@@ -1309,6 +1309,144 @@
         function showFolder(files, targetId) { let list = [...files]; let first = list[0]?.webkitRelativePath || list[0]?.name || ''; chosenFolder = first.split('/')[0] || '已选择文件夹'; let video = list.filter(f => /\.(mp4|mov|m4v)$/i.test(f.name)).length; let sheet = list.some(f => /\.xlsx?$/i.test(f.name)); let summary = `✓ ${chosenFolder} · ${list.length} 个文件\n${sheet ? '✓ 找到表格清单' : '! 未找到 xlsx 清单'} · ${video} 个视频素材`; let target = document.getElementById(targetId); if (target) target.textContent = summary; if (page === 'import') render(); }
         render();
     </script>
+    <script>
+        // Phase 1: the renderer only talks to the main process through preload.
+        // No Pinterest page, credentials, cookies, media, or task queue is touched here.
+        const phase1State = {
+            baseUrl: 'http://127.0.0.1:54345',
+            status: '未连接',
+            error: '',
+            windows: [],
+            cdpEndpoints: {},
+            busy: false
+        };
+
+        function phase1Escape(value) {
+            return String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
+        }
+
+        function phase1Quote(value) {
+            return JSON.stringify(String(value ?? '')).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function phase1StatusLabel() {
+            return phase1State.busy ? '未连接' : phase1State.status === 'API 已连接' || phase1State.status === '窗口列表已读取' ? '连接正常' : phase1State.status;
+        }
+
+        function phase1StatusClass() {
+            return phase1State.status === '连接正常' || phase1State.status === 'API 已连接' || phase1State.status === '窗口列表已读取' ? 'green' : phase1State.status === '连接失败' ? 'red' : 'gray';
+        }
+
+        function phase1Message(error) {
+            const code = error?.code;
+            if (code === 'TIMEOUT') return '连接超时，请确认 BitBrowser 已启动。';
+            if (code === 'INVALID_URL') return 'API 地址格式不正确。';
+            if (code === 'API_ERROR' || code === 'HTTP_ERROR') return '无法连接，请检查 API 端口。';
+            return error?.message || '请启动 BitBrowser 后重试。';
+        }
+
+        function phase1CanUse() {
+            if (!window.autoAPI?.bitBrowser) {
+                toast('请从 AUTO 桌面版启动连接功能');
+                return false;
+            }
+            return true;
+        }
+
+        function phase1WindowRows() {
+            if (!phase1State.windows.length) {
+                return '<tr><td colspan="4" class="emptyhint">还没有读取到窗口，请确认 BitBrowser 已启动。</td></tr>';
+            }
+            return phase1State.windows.map((item) => {
+                const state = item.is_open ? '已打开' : '已关闭';
+                const action = item.is_open
+                    ? `<button class="btn small" onclick="phase1CloseWindow(__WINDOW_ID__)">关闭</button>`
+                    : `<button class="btn small primary" onclick="phase1OpenWindow(__WINDOW_ID__)">打开</button>`;
+                return `<tr><td><b>${phase1Escape(item.window_name || '未命名窗口')}</b><small>${phase1Escape(item.remark || '—')}</small></td><td><code>${phase1Escape(item.window_id)}</code></td><td><span class="status ${item.is_open ? 'green' : 'gray'}">${state}</span></td><td>${action.replace('__WINDOW_ID__', phase1Quote(item.window_id))}</td></tr>`;
+            }).join('');
+        }
+
+        function accountsV1() {
+            const status = phase1StatusLabel();
+            return `${head('阶段 1 · BitBrowser', '账号管理', '先连接本机 BitBrowser，再查看可用窗口。当前阶段不访问 Pinterest，也不读取密码或 Cookie。', `<button class="btn primary" onclick="phase1ReadWindows()">↻ 读取窗口列表</button>`)}
+                <div class="card" style="padding:20px;margin-bottom:16px">
+                    <div class="card-head" style="padding:0 0 14px"><div><h3>BitBrowser 连接</h3><p>只调用本机 API，连接信息不会写入任务数据。</p></div><span class="status ${phase1StatusClass()}">${status}</span></div>
+                    <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap"><label for="bitbrowserBaseUrl" style="font-size:12px;color:var(--muted)">API 地址</label><input id="bitbrowserBaseUrl" class="search" style="width:260px" value="${phase1Escape(phase1State.baseUrl)}" onchange="phase1State.baseUrl=this.value.trim()"><button class="btn small" onclick="phase1AutoDetect()">自动检测</button><button class="btn small primary" onclick="phase1ReadWindows()">读取窗口列表</button></div>
+                    ${phase1State.error ? `<div style="margin-top:12px;padding:11px 13px;background:var(--rose);color:#9b4e40;border-radius:9px;font-size:11px">${phase1Escape(phase1State.error)}</div>` : ''}
+                </div>
+                <div class="card table-card"><div class="toolbar"><div><b>窗口列表</b><span class="emptyhint" style="margin-left:10px">${phase1State.windows.length} 个窗口</span></div><span class="emptyhint">窗口打开后只保留本次连接地址</span></div><div class="table-scroll"><table><thead><tr><th>窗口名称</th><th>窗口 ID</th><th>当前状态</th><th>操作</th></tr></thead><tbody>${phase1WindowRows()}</tbody></table></div></div>
+                <div style="margin-top:15px;padding:14px 17px;background:#fff7dc;border:1px solid #f0e2af;border-radius:11px;color:#80621f;font-size:11px;line-height:1.6">本阶段只负责发现、打开和关闭 BitBrowser 窗口。不会连接 Pinterest，不会上传视频，也不会创建任务队列。</div>`;
+        }
+
+        async function phase1ReadWindows() {
+            if (!phase1CanUse() || phase1State.busy) return;
+            phase1State.busy = true;
+            phase1State.status = '连接检查中';
+            phase1State.error = '';
+            render();
+            try {
+                await window.autoAPI.bitBrowser.health(phase1State.baseUrl);
+                phase1State.status = 'API 已连接';
+                const result = await window.autoAPI.bitBrowser.listWindows({ baseUrl: phase1State.baseUrl });
+                phase1State.windows = result.windows;
+                phase1State.status = '窗口列表已读取';
+                toast(`已读取 ${phase1State.windows.length} 个 BitBrowser 窗口`);
+            } catch (error) {
+                phase1State.status = '连接失败';
+                phase1State.error = phase1Message(error);
+                toast(phase1State.error);
+            } finally {
+                phase1State.busy = false;
+                render();
+            }
+        }
+
+        function phase1AutoDetect() {
+            phase1State.baseUrl = 'http://127.0.0.1:54345';
+            phase1ReadWindows();
+        }
+
+        async function phase1OpenWindow(windowId) {
+            if (!phase1CanUse() || phase1State.busy) return;
+            phase1State.busy = true;
+            phase1State.error = '';
+            try {
+                const result = await window.autoAPI.bitBrowser.openWindow({ baseUrl: phase1State.baseUrl, windowId });
+                phase1State.cdpEndpoints[windowId] = result.cdp_endpoint;
+                phase1State.windows = phase1State.windows.map((item) => item.window_id === windowId ? { ...item, is_open: true } : item);
+                phase1State.status = '窗口列表已读取';
+                toast('窗口已打开');
+            } catch (error) {
+                phase1State.error = phase1Message(error);
+                toast(phase1State.error);
+            } finally {
+                phase1State.busy = false;
+                render();
+            }
+        }
+
+        async function phase1CloseWindow(windowId) {
+            if (!phase1CanUse() || phase1State.busy) return;
+            phase1State.busy = true;
+            phase1State.error = '';
+            try {
+                await window.autoAPI.bitBrowser.closeWindow({ baseUrl: phase1State.baseUrl, windowId });
+                phase1State.windows = phase1State.windows.map((item) => item.window_id === windowId ? { ...item, is_open: false } : item);
+                delete phase1State.cdpEndpoints[windowId];
+                toast('窗口已关闭');
+            } catch (error) {
+                phase1State.error = phase1Message(error);
+                toast(phase1State.error);
+            } finally {
+                phase1State.busy = false;
+                render();
+            }
+        }
+
+        // Keep the existing demo structure but replace the phase-1 account page and connection action.
+        connectBitBrowser = phase1ReadWindows;
+        render();
+    </script>
 </body>
 
 </html>
