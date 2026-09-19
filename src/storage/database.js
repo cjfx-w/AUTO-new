@@ -32,6 +32,34 @@ function initDatabase(filename) {
       synced_at TEXT NOT NULL,
       PRIMARY KEY (account_id, board_id),
       FOREIGN KEY (account_id) REFERENCES accounts(account_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS import_batches (
+      batch_id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      confirmed_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS import_items (
+      item_id TEXT PRIMARY KEY,
+      batch_id TEXT NOT NULL,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL,
+      video_id TEXT NOT NULL DEFAULT '',
+      file_name TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      product_url TEXT NOT NULL DEFAULT '',
+      account_group TEXT NOT NULL DEFAULT '',
+      board TEXT NOT NULL DEFAULT '',
+      account_id TEXT,
+      board_id TEXT,
+      asset_hash TEXT NOT NULL,
+      duplicate INTEGER NOT NULL DEFAULT 0,
+      validation_error TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (batch_id) REFERENCES import_batches(batch_id) ON DELETE CASCADE
     )
   `);
   db.pragma('foreign_keys = ON');
@@ -174,4 +202,91 @@ function validateBoard(db, { accountId, boardId, boardName, boardUrl }) {
   return { valid: Boolean(board), board: board ?? null };
 }
 
-module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, validateBoard, canonicalizeBoardQuery };
+function listAccounts(db) {
+  return db.prepare('SELECT * FROM accounts ORDER BY pinterest_username COLLATE NOCASE').all();
+}
+
+function listImportAssetHashes(db) {
+  return new Set(db.prepare('SELECT asset_hash FROM import_items').all().map((row) => row.asset_hash));
+}
+
+function saveImportPreview(db, preview) {
+  const crypto = require('node:crypto');
+  const now = new Date().toISOString();
+  const save = db.transaction(() => {
+    const batches = [];
+    for (const batch of preview.batches) {
+      const batchId = crypto.createHash('sha256').update(`${batch.product_id}:${now}:${Math.random()}`).digest('hex').slice(0, 24);
+      db.prepare('INSERT INTO import_batches (batch_id, product_id, product_name, status, created_at, confirmed_at) VALUES (?, ?, ?, ?, ?, NULL)').run(batchId, batch.product_id, batch.product_name, 'pending_confirmation', now);
+      const insert = db.prepare(`INSERT INTO import_items (item_id, batch_id, product_id, product_name, video_id, file_name, file_path, title, description, product_url, account_group, board, account_id, board_id, asset_hash, duplicate, validation_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const items = batch.items.map((item) => {
+        const itemId = crypto.createHash('sha256').update(`${batchId}:${item.file_name}:${item.asset_hash}`).digest('hex').slice(0, 24);
+        insert.run(itemId, batchId, batch.product_id, batch.product_name, item.video_id, item.file_name, item.file_path, item.title, item.description, item.product_url, item.account_group, item.board, item.account_id, item.board_id, item.asset_hash, item.duplicate ? 1 : 0, item.validation_error ?? '');
+        return { ...item, item_id: itemId, batch_id: batchId };
+      });
+      batches.push({ ...batch, batch_id: batchId, items });
+    }
+    return batches;
+  });
+  return save();
+}
+
+function updateImportItem(db, { itemId, title, description, productUrl, board, boardId }) {
+  const state = db.prepare('SELECT b.status, i.account_id, i.file_path, i.validation_error FROM import_items i JOIN import_batches b ON b.batch_id = i.batch_id WHERE i.item_id = ?').get(itemId);
+  if (!state || state.status !== 'pending_confirmation') throw new Error('已确认批次不能再修改。');
+  if (board !== undefined && boardId === undefined) {
+    let boardReference = board;
+    try { const parsed = new URL(board); if (/(^|\.)pinterest\.com$/i.test(parsed.hostname)) { parsed.protocol = 'https:'; parsed.hostname = 'www.pinterest.com'; parsed.search = ''; parsed.hash = ''; parsed.pathname = `${parsed.pathname.replace(/\/+$/, '')}/`; boardReference = parsed.toString(); } } catch {}
+    const match = state.account_id ? db.prepare('SELECT board_id, board_name FROM boards WHERE account_id = ? AND (lower(board_name) = lower(?) OR board_id = ? OR lower(board_url) = lower(?))').get(state.account_id, boardReference, boardReference, boardReference) : null;
+    boardId = match?.board_id ?? null;
+    board = match?.board_name ?? board;
+  }
+  if (boardId !== undefined && boardId !== null) {
+    const validBoard = db.prepare('SELECT board_name FROM boards WHERE account_id = ? AND board_id = ?').get(state.account_id, boardId);
+    if (!validBoard || String(validBoard.board_name).toLowerCase() !== String(board ?? '').toLowerCase()) boardId = null;
+  }
+  const validationErrors = String(state.validation_error || '').split('；').filter((error) => error && !(['产品链接格式不正确'].includes(error) || error.startsWith('标题') || error.startsWith('描述') || error.startsWith('Board 无法匹配')));
+  if (!state.file_path) validationErrors.push(state.validation_error || '素材文件无效');
+  try { const url = new URL(productUrl); if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) validationErrors.push('产品链接格式不正确'); } catch { validationErrors.push('产品链接格式不正确'); }
+  if (!title || !description) validationErrors.push('标题、描述不能为空');
+  if (!boardId) validationErrors.push('Board 无法匹配');
+  db.prepare('UPDATE import_items SET title = ?, description = ?, product_url = ?, board = ?, board_id = ?, validation_error = ? WHERE item_id = ?').run(title, description, productUrl, board, boardId ?? null, validationErrors.join('；'), itemId);
+  return db.prepare('SELECT * FROM import_items WHERE item_id = ?').get(itemId);
+}
+
+function confirmImportBatch(db, batchId) {
+  const fs = require('node:fs');
+  const now = new Date().toISOString();
+  const items = db.prepare('SELECT * FROM import_items WHERE batch_id = ?').all(batchId);
+  if (!items.length) return { confirmed: false, batch_id: batchId, status: 'invalid', reason: '批次没有素材。' };
+  if (items.some((item) => {
+    try { return !item.file_path || !fs.statSync(item.file_path).isFile(); } catch { return true; }
+  })) return { confirmed: false, batch_id: batchId, status: 'invalid', reason: '有视频素材已不存在，请重新导入。' };
+  const productIdentity = new Map();
+  for (const item of items) {
+    const previous = productIdentity.get(item.product_id);
+    if (previous && (previous.product_name !== item.product_name || previous.product_url !== item.product_url)) {
+      return { confirmed: false, batch_id: batchId, status: 'invalid', reason: '同一产品的名称和链接必须保持一致。' };
+    }
+    productIdentity.set(item.product_id, { product_name: item.product_name, product_url: item.product_url });
+  }
+  const boardMatches = items.every((item) => {
+    const board = db.prepare('SELECT board_name FROM boards WHERE account_id = ? AND board_id = ?').get(item.account_id, item.board_id);
+    return board && String(board.board_name).toLowerCase() === String(item.board).toLowerCase();
+  });
+  if (!boardMatches) return { confirmed: false, batch_id: batchId, status: 'invalid', reason: 'Board 必须属于当前账号，且名称与 Board ID 一致。' };
+  const validLinks = (value) => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname); } catch { return false; } };
+  if (items.some((item) => item.duplicate || item.validation_error || !item.account_id || !item.board_id || !item.title || !item.description || !validLinks(item.product_url))) {
+    return { confirmed: false, batch_id: batchId, status: 'invalid', reason: '请先处理重复素材、账号、Board 和内容字段。' };
+  }
+  const result = db.prepare("UPDATE import_batches SET status = 'confirmed', confirmed_at = ? WHERE batch_id = ? AND status = 'pending_confirmation'").run(now, batchId);
+  return { confirmed: result.changes === 1, batch_id: batchId, status: result.changes === 1 ? 'confirmed' : 'unchanged' };
+}
+
+function getImportBatches(db) {
+  const batches = db.prepare('SELECT * FROM import_batches ORDER BY created_at DESC').all();
+  const itemQuery = db.prepare('SELECT * FROM import_items WHERE batch_id = ? ORDER BY item_id');
+  return batches.map((batch) => ({ ...batch, items: itemQuery.all(batch.batch_id) }));
+}
+
+module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches };

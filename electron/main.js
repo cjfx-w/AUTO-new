@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { BitBrowserClient } = require('../src/bitbrowser/client');
 const { PinterestAccountBoardService } = require('../src/pinterest/account-board');
+const { buildImportPreview } = require('../src/import/batch-preview');
 const storage = require('../src/storage/database');
 
 let mainWindow;
@@ -81,6 +82,29 @@ function registerIpc() {
     assertTrustedSender(event);
     if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.accountId !== 'string') throw new Error('Board 校验参数不正确。');
     return accountBoardService.validateBoard(input);
+  });
+  ipcMain.handle('import:preview-folder', async (event, folderPath) => {
+    assertTrustedSender(event);
+    if (typeof folderPath !== 'string' || !path.isAbsolute(folderPath)) throw new Error('素材文件夹路径不正确。');
+    const accounts = storage.listAccounts(database);
+    const boardsByAccount = new Map(accounts.map((account) => [account.account_id, storage.getBoards(database, account.account_id)]));
+    const preview = await buildImportPreview({ folderPath, accounts, boardsByAccount, existingHashes: storage.listImportAssetHashes(database) });
+    const savedBatches = storage.saveImportPreview(database, preview);
+    return { ...preview, batches: savedBatches };
+  });
+  ipcMain.handle('import:update-item', (event, input) => {
+    assertTrustedSender(event);
+    if (!input || typeof input !== 'object' || typeof input.itemId !== 'string') throw new Error('预览修改参数不正确。');
+    return { updated: true, item: storage.updateImportItem(database, input) };
+  });
+  ipcMain.handle('import:confirm-batch', (event, batchId) => {
+    assertTrustedSender(event);
+    if (typeof batchId !== 'string' || !batchId.trim()) throw new Error('批次参数不正确。');
+    return storage.confirmImportBatch(database, batchId);
+  });
+  ipcMain.handle('import:list-batches', (event) => {
+    assertTrustedSender(event);
+    return storage.getImportBatches(database);
   });
 }
 

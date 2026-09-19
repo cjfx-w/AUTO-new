@@ -1501,10 +1501,71 @@
             return `${head('阶段 2 · 账号与 Board', '账号管理', '先读取 BitBrowser 窗口，再识别 Pinterest 账号并检查 Board。', `<button class="btn primary" onclick="go('accounts')">打开账号管理 →</button>`)}<div class="card" style="padding:24px"><div class="card-head" style="padding:0 0 14px"><div><h3>阶段 2 已启用</h3><p>当前只处理账号绑定、Board 快照和 Board 校验。</p></div><span class="status green">范围已锁定</span></div><div class="grid two-col"><div class="detail-box"><small>已包含</small><b>BitBrowser 窗口、Pinterest 账号、Board 快照</b></div><div class="detail-box"><small>暂不包含</small><b>素材导入、任务队列、视频上传和 Publish</b></div></div></div>`;
         }
         home = phase2Home;
-        const phase2BlockedPages = new Set(['import', 'queue', 'issues', 'history', 'review']);
+        const phase3State = { batches: [], errors: [], folderPath: '', busy: false };
+        function phase3Escape(value) { return phase1Escape(value); }
+        function phase3ChooseFolder() {
+            const input = document.getElementById('folderInput');
+            if (input) input.click();
+        }
+        async function phase3ImportFolder(folderPath) {
+            if (!window.autoAPI?.imports || !folderPath || phase3State.busy) return;
+            phase3State.busy = true;
+            phase3State.folderPath = folderPath;
+            try {
+                const result = await window.autoAPI.imports.previewFolder(folderPath);
+                phase3State.batches = result.batches;
+                phase3State.errors = result.errors || [];
+                toast(phase3State.errors.length ? `已生成预览，但有 ${phase3State.errors.length} 项需要处理` : `已生成 ${phase3State.batches.length} 个产品批次`);
+            } catch (error) {
+                phase3State.errors = [error.message || '导入失败'];
+                toast(phase3State.errors[0]);
+            } finally {
+                phase3State.busy = false;
+                render();
+            }
+        }
+        function phase3FolderFromFiles(files) {
+            const file = files?.[0];
+            if (!file?.path) { toast('请使用 AUTO 桌面版选择产品文件夹'); return ''; }
+            const relative = (file.webkitRelativePath || '').replaceAll('/', '\\');
+            if (!relative) return file.path.replace(/[\\/][^\\/]+$/, '');
+            const rootName = relative.split('\\')[0];
+            const suffix = relative.slice(rootName.length);
+            const lowerPath = file.path.toLowerCase();
+            const lowerSuffix = suffix.toLowerCase();
+            return suffix && lowerPath.endsWith(lowerSuffix) ? file.path.slice(0, file.path.length - suffix.length) : file.path.replace(/[\\/][^\\/]+$/, '');
+        }
+        async function phase3LoadBatches() {
+            if (!window.autoAPI?.imports) return;
+            try { phase3State.batches = await window.autoAPI.imports.listBatches(); } catch (error) { phase3State.errors = [error.message || '无法读取已保存批次']; }
+        }
+        async function phase3UpdateItem(itemId, field, value) {
+            const batch = phase3State.batches.find((candidate) => candidate.items.some((item) => item.item_id === itemId));
+            if (!batch || batch.status === 'confirmed') return;
+            const item = batch.items.find((candidate) => candidate.item_id === itemId);
+            if (!item) return;
+            const next = { ...item, [field]: value };
+            const payload = { itemId, title: next.title, description: next.description, productUrl: next.product_url, board: next.board, boardId: next.board_id };
+            if (field === 'board') delete payload.boardId;
+            try { const result = await window.autoAPI.imports.updateItem(payload); Object.assign(item, result.item || {}, { [field]: value }); render(); } catch (error) { toast(error.message || '保存修改失败'); render(); }
+        }
+        async function phase3ConfirmBatch(batchId) {
+            const result = await window.autoAPI.imports.confirmBatch(batchId);
+            if (!result.confirmed) { toast(result.reason || '当前批次还不能确认'); return; }
+            const batch = phase3State.batches.find((candidate) => candidate.batch_id === batchId);
+            if (batch) batch.status = 'confirmed';
+            toast('本批已确认，已保存批次状态；任务队列将在后续阶段实现');
+            render();
+        }
+        function importPageV1() {
+            const batchCards = phase3State.batches.length ? phase3State.batches.map((batch) => `<div class="card" style="margin-top:14px"><div class="card-head"><div><h3>批次 · ${phase3Escape(batch.product_name)}</h3><p>${batch.items.length} 条视频 · 产品编号 ${phase3Escape(batch.product_id)}</p></div><span class="status ${batch.status === 'confirmed' ? 'green' : 'yellow'}">${batch.status === 'confirmed' ? '已确认' : '待确认'}</span></div><div style="padding:0 20px 20px">${batch.items.map((item) => `<div class="feed-row" style="align-items:flex-start"><div class="thumb">▶</div><div class="feed-info"><b>${phase3Escape(item.file_name)}</b><small>${phase3Escape(item.account_group || '未填写账号')} · ${phase3Escape(item.board || '未填写 Board')}${item.duplicate ? ' · 重复素材' : ''}</small><div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px"><input class="search" value="${phase3Escape(item.title)}" placeholder="标题" onchange="phase3UpdateItem('${item.item_id}','title',this.value)"><input class="search" value="${phase3Escape(item.product_url)}" placeholder="产品链接" onchange="phase3UpdateItem('${item.item_id}','product_url',this.value)"><input class="search" value="${phase3Escape(item.board)}" placeholder="Board" onchange="phase3UpdateItem('${item.item_id}','board',this.value)"><input class="search" value="${phase3Escape(item.description)}" placeholder="描述" onchange="phase3UpdateItem('${item.item_id}','description',this.value)"></div></div></div>`).join('')}<div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn ${batch.status === 'confirmed' ? '' : 'primary'} small" ${batch.status === 'confirmed' ? 'disabled' : ''} onclick="phase3ConfirmBatch('${batch.batch_id}')">${batch.status === 'confirmed' ? '已确认' : '确认本批'}</button></div></div></div>`).join('') : '<div class="card" style="padding:24px"><span class="emptyhint">选择产品文件夹后，这里会按产品显示批次预览。</span></div>';
+            return `${head('阶段 3 · 导入与素材', '导入与素材', '选择包含 pins.xlsx 和 media/ 的产品文件夹，按产品分批预览并确认。', `<button class="btn primary" onclick="phase3ChooseFolder()">＋ 选择产品文件夹</button>`)}<div class="card" style="padding:20px"><div class="dropzone"><div class="upload-icon">▱</div><b>${phase3Escape(phase3State.folderPath || '还没有选择产品文件夹')}</b><p>本阶段只读取表格和视频文件生成预览，不上传视频，不创建任务队列。</p><button class="btn small" onclick="phase3ChooseFolder()">选择文件夹</button></div>${phase3State.errors.length ? `<div style="margin-top:12px;padding:12px;background:var(--rose);color:#9b4e40;border-radius:9px;font-size:11px">${phase3State.errors.map(phase3Escape).join('<br>')}</div>` : ''}</div><div style="margin-top:20px"><div class="eyebrow">产品批次预览</div>${batchCards}</div>`;
+        }
+        home = () => `${head('阶段 3 · 导入与素材', '工作台', '先选择产品文件夹，再按产品批次检查和确认导入内容。', `<button class="btn primary" onclick="go('import')">打开导入与素材 →</button>`)}<div class="card" style="padding:24px"><div class="card-head" style="padding:0 0 14px"><div><h3>阶段 3 已启用</h3><p>当前只处理产品表格、视频文件和批次预览。</p></div><span class="status green">范围已锁定</span></div><div class="grid two-col"><div class="detail-box"><small>已包含</small><b>pins.xlsx、media/、产品批次预览、字段修改</b></div><div class="detail-box"><small>暂不包含</small><b>任务队列、视频上传、Publish 和定时发布</b></div></div></div>`;
+        const phase2BlockedPages = new Set(['queue', 'issues', 'history', 'review']);
         const originalGoForPhase2 = go;
-        const phase2BlockedMessage = () => toast('阶段 2 暂不开放素材、任务队列和发布功能');
-        openImport = phase2BlockedMessage;
+        const phase2BlockedMessage = () => toast('当前阶段暂不开放任务队列和发布功能');
+        openImport = phase3ChooseFolder;
         simulateImport = phase2BlockedMessage;
         startBatch = phase2BlockedMessage;
         go = (nextPage) => {
@@ -1516,8 +1577,30 @@
         };
         document.querySelectorAll('.nav button').forEach((button) => {
             if (phase2BlockedPages.has(button.dataset.page)) button.style.display = 'none';
+            if (button.dataset.page === 'import') button.style.display = '';
+        });
+        function phase3LockInputs() {
+            document.querySelectorAll('#view .card').forEach((card) => {
+                const status = card.querySelector('.status');
+                if (status?.textContent?.trim() === '已确认') card.querySelectorAll('input').forEach((input) => { input.disabled = true; });
+            });
+        }
+        function phase3RenderValidationErrors() {
+            phase3State.batches.flatMap((batch) => batch.items).forEach((item) => {
+                if (!item.validation_error) return;
+                const input = document.querySelector(`[onchange*="'${item.item_id}'"]`);
+                const info = input?.closest('.feed-info');
+                if (info && !info.querySelector('.phase3-error')) info.insertAdjacentHTML('afterbegin', `<div class="phase3-error" style="color:#a04f40;font-size:11px;margin-bottom:6px">${phase3Escape(item.validation_error)}</div>`);
+            });
+        }
+        const phase3RenderBase = render;
+        render = () => { phase3RenderBase(); phase3LockInputs(); phase3RenderValidationErrors(); };
+        const folderInput = document.getElementById('folderInput');
+        if (folderInput) folderInput.addEventListener('change', (event) => {
+            phase3ImportFolder(phase3FolderFromFiles(event.target.files));
         });
         render();
+        phase3LoadBatches().then(() => { if (page === 'home' || page === 'import') render(); });
     </script>
 </body>
 
