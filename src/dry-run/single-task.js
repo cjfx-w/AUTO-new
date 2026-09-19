@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { PinterestValidationError, } = require('../pinterest/errors');
 const { extractPinterestAccount } = require('../pinterest/account-board');
+const { stableId } = require('../pinterest/account-board');
 
 const PINTEREST_HOME = 'https://www.pinterest.com/';
 const PIN_BUILDER = 'https://www.pinterest.com/pin-builder/';
@@ -53,14 +54,16 @@ class SingleTaskDryRunService {
     throw new PinterestValidationError('PAGE_CONTROL_NOT_FOUND', `无法确认${step}控件。`);
   }
 
-  async run({ itemId, bitWindowId, cdpEndpoint } = {}) {
+  async run({ itemId, bitWindowId, cdpEndpoint, allowCreateBoard = false } = {}) {
     if (!itemId || !bitWindowId || !cdpEndpoint) throw new PinterestValidationError('INVALID_INPUT', '缺少预演任务、窗口或 CDP 信息。');
     const item = this.storage.getConfirmedImportItem(itemId);
     if (!item) throw new PinterestValidationError('TASK_NOT_CONFIRMED', '只能预演已确认的单视频任务。');
     const account = this.storage.getAccountById(item.account_id);
     if (!account || account.bit_window_id !== bitWindowId) throw new PinterestValidationError('ACCOUNT_MISMATCH', '任务账号与当前 BitBrowser 窗口不一致。');
-    const boardCheck = this.storage.validateBoard({ accountId: item.account_id, boardId: item.board_id, boardName: item.board, boardUrl: null });
-    if (!boardCheck.valid) throw new PinterestValidationError('BOARD_MISSING', '预演前 Board 校验失败。');
+    let boardCheck = this.storage.validateBoard({ accountId: item.account_id, boardId: item.board_id, boardName: item.board, boardUrl: null });
+    if (!boardCheck.valid) boardCheck = this.storage.validateBoard({ accountId: item.account_id, boardId: null, boardName: item.board, boardUrl: null });
+    if (!boardCheck.valid && !allowCreateBoard) throw new PinterestValidationError('BOARD_CREATION_CONFIRM_REQUIRED', `当前账号不存在 Board“${item.board}”，是否创建？`);
+    if (boardCheck.valid && boardCheck.board?.board_id && item.board_id !== boardCheck.board.board_id) this.storage.updateImportItemBoard?.(item.item_id, boardCheck.board.board_id, boardCheck.board.board_name);
     if (!item.file_path || !fs.existsSync(item.file_path) || !fs.statSync(item.file_path).isFile()) throw new PinterestValidationError('ASSET_MISSING', '视频素材不存在。');
 
     const attempt = this.storage.createDryRunAttempt({ itemId, bitWindowId, accountId: item.account_id });
@@ -80,6 +83,9 @@ class SingleTaskDryRunService {
         if (identity.account_id !== item.account_id) throw new PinterestValidationError('ACCOUNT_MISMATCH', '当前 Pinterest 账号与任务账号不一致。');
         await this.step(attempt, page, 'account_verified');
         await page.goto(PIN_BUILDER, { waitUntil: 'domcontentloaded', timeout: 15000 });
+        if (!boardCheck.valid) {
+          boardCheck = await this.createBoardAndRefresh(page, item, account);
+        }
         const targetBoardPath = new URL(boardCheck.board.board_url).pathname.replace(/\/+$/, '').toLowerCase();
         const boardLinks = page.locator('a[href]').filter({ hasText: item.board });
         let boardControl = null;
@@ -154,6 +160,71 @@ class SingleTaskDryRunService {
     const href = await locator.evaluate((element) => element.getAttribute('href') || element.getAttribute('data-url') || element.closest('a,[data-url]')?.getAttribute('href') || element.closest('a,[data-url]')?.getAttribute('data-url'));
     if (!href) return false;
     try { return new URL(href, page.url()).pathname.replace(/\/+$/, '').toLowerCase() === expected; } catch { return false; }
+  }
+
+  async createBoardAndRefresh(page, item, account) {
+    await page.goto(PINTEREST_HOME, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const currentIdentity = extractPinterestAccount(await this.snapshot(page));
+    if (currentIdentity.account_id !== item.account_id) throw new PinterestValidationError('ACCOUNT_MISMATCH', '创建 Board 前当前账号发生变化。');
+    await page.goto(`${account.pinterest_profile_url}boards/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const currentLinks = await this.findBoardLink(page, item.board);
+    for (const link of currentLinks) {
+      const href = await link.getAttribute('href');
+      if (!href) continue;
+      const parsed = new URL(href, page.url());
+      const parts = parsed.pathname.split('/').filter(Boolean);
+      if (parts.length === 2 && parts[0].toLowerCase() === account.pinterest_username.toLowerCase()) {
+        const boardUrl = `https://www.pinterest.com/${parts[0]}/${parts[1]}/`;
+        const boardId = stableId(parts[1]);
+        (this.storage.saveCreatedBoardAndUpdateItem ?? ((input) => { this.storage.saveCreatedBoard(input); this.storage.updateImportItemBoard?.(input.itemId, input.boardId, input.boardName); }))({ accountId: item.account_id, boardId, boardName: item.board, boardUrl, itemId: item.item_id });
+        return { valid: true, board: { account_id: item.account_id, board_id: boardId, board_name: item.board, board_url: boardUrl } };
+      }
+    }
+    await page.goto(PIN_BUILDER, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    const createButton = page.getByRole('button', { name: /create board|创建.*board|创建看板/i });
+    if (!(await createButton.count())) throw new PinterestValidationError('BOARD_CREATE_FAILED', '无法确认创建 Board 控件。');
+    await createButton.first().click();
+    const nameInput = page.getByLabel(/board name|名称/i).or(page.getByPlaceholder(/board name|名称/i));
+    if (!(await nameInput.count())) throw new PinterestValidationError('BOARD_CREATE_FAILED', '无法确认 Board 名称输入框。');
+    await nameInput.first().fill(item.board);
+    const confirmButton = page.getByRole('button', { name: /create|创建/i });
+    if (!(await confirmButton.count())) throw new PinterestValidationError('BOARD_CREATE_FAILED', '无法确认创建按钮。');
+    await confirmButton.last().click();
+    await page.goto(`${account.pinterest_profile_url}boards/`, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    let boardLinks = await this.findBoardLink(page, item.board);
+    let boardLinkCount = boardLinks.length;
+    for (let attempt = 0; attempt < 10 && !boardLinkCount; attempt += 1) { await page.waitForTimeout(1000); boardLinks = await this.findBoardLink(page, item.board); boardLinkCount = boardLinks.length; }
+    if (!boardLinkCount) throw new PinterestValidationError('BOARD_CREATE_FAILED', 'Board 创建后重新读取失败。');
+    const boardLink = boardLinks[0];
+    await boardLink.waitFor({ state: 'visible', timeout: 10000 });
+    const href = await boardLink.getAttribute('href');
+    if (!href) throw new PinterestValidationError('BOARD_CREATE_FAILED', '创建成功但无法读取 Board 地址。');
+    const parsedBoardUrl = new URL(href, page.url());
+    if (!/(^|\.)pinterest\.com$/i.test(parsedBoardUrl.hostname) || parsedBoardUrl.username || parsedBoardUrl.password) throw new PinterestValidationError('BOARD_CREATE_FAILED', '创建后读取到的 Board 地址不是安全的 Pinterest 地址。');
+    parsedBoardUrl.protocol = 'https:';
+    parsedBoardUrl.hostname = 'www.pinterest.com';
+    parsedBoardUrl.search = '';
+    parsedBoardUrl.hash = '';
+    parsedBoardUrl.pathname = `${parsedBoardUrl.pathname.replace(/\/+$/, '')}/`;
+    const boardUrl = parsedBoardUrl.toString();
+    const identity = extractPinterestAccount(await this.snapshot(page));
+    if (identity.account_id !== item.account_id) throw new PinterestValidationError('ACCOUNT_MISMATCH', '创建 Board 后当前账号发生变化。');
+    const boardPath = new URL(boardUrl).pathname.split('/').filter(Boolean);
+    if (boardPath.length !== 2 || boardPath[0].toLowerCase() !== identity.pinterest_username.toLowerCase()) throw new PinterestValidationError('BOARD_CREATE_FAILED', '重新读取到的 Board 不属于当前账号。');
+    const boardId = stableId(boardPath[1]);
+    (this.storage.saveCreatedBoardAndUpdateItem ?? ((input) => { this.storage.saveCreatedBoard(input); this.storage.updateImportItemBoard?.(input.itemId, input.boardId, input.boardName); }))({ accountId: item.account_id, boardId, boardName: item.board, boardUrl, itemId: item.item_id });
+    await page.goto(PIN_BUILDER, { waitUntil: 'domcontentloaded', timeout: 15000 });
+    return { valid: true, board: { account_id: item.account_id, board_id: boardId, board_name: item.board, board_url: boardUrl } };
+  }
+
+  async findBoardLink(page, boardName) {
+    const links = page.locator('a[href]');
+    const matches = [];
+    for (let index = 0; index < await links.count(); index += 1) {
+      const link = links.nth(index);
+      if ((await link.innerText()).trim().toLowerCase() === boardName.toLowerCase()) matches.push(link);
+    }
+    return matches;
   }
 }
 

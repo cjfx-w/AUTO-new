@@ -111,7 +111,7 @@ function registerIpc() {
   ipcMain.handle('dry-run:start', async (event, input) => {
     assertTrustedSender(event);
     if (!input || typeof input !== 'object' || typeof input.itemId !== 'string' || typeof input.windowId !== 'string') throw new Error('预演参数不正确。');
-    return dryRunService.run({ itemId: input.itemId, bitWindowId: input.windowId, cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
+    return dryRunService.run({ itemId: input.itemId, bitWindowId: input.windowId, allowCreateBoard: Boolean(input.allowCreateBoard), cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
   });
 }
 
@@ -143,6 +143,9 @@ app.whenReady().then(() => {
       getConfirmedImportItem: (itemId) => storage.getConfirmedImportItem(database, itemId),
       getAccountById: (accountId) => storage.getAccountById(database, accountId),
       validateBoard: (input) => storage.validateBoard(database, input),
+      saveCreatedBoard: (input) => storage.saveCreatedBoard(database, input),
+      saveCreatedBoardAndUpdateItem: (input) => storage.saveCreatedBoardAndUpdateItem(database, input),
+      updateImportItemBoard: (itemId, boardId, boardName) => storage.updateImportItemBoard(database, itemId, boardId, boardName),
       createDryRunAttempt: (input) => storage.createDryRunAttempt(database, input),
       updateDryRunStep: (attemptId, step, pageUrl, screenshotPath) => storage.updateDryRunStep(database, attemptId, step, pageUrl, screenshotPath),
       finishDryRunAttempt: (attemptId, input) => storage.finishDryRunAttempt(database, attemptId, input),

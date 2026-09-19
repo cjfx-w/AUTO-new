@@ -174,6 +174,28 @@ function getBoards(db, accountId) {
   return db.prepare('SELECT * FROM boards WHERE account_id = ? ORDER BY board_name COLLATE NOCASE').all(accountId);
 }
 
+function saveCreatedBoard(db, { accountId, boardId, boardName, boardUrl }) {
+  db.prepare(`
+    INSERT INTO boards (account_id, board_id, board_name, board_url, synced_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(account_id, board_id) DO UPDATE SET board_name = excluded.board_name, board_url = excluded.board_url, synced_at = excluded.synced_at
+  `).run(accountId, boardId, boardName, boardUrl, new Date().toISOString());
+}
+
+function updateImportItemBoard(db, itemId, boardId, boardName) {
+  const current = db.prepare('SELECT validation_error FROM import_items WHERE item_id = ?').get(itemId);
+  const remainingErrors = String(current?.validation_error ?? '').split('；').filter((error) => !/^Board 无法匹配/.test(error)).join('；');
+  db.prepare('UPDATE import_items SET board_id = ?, board = ?, validation_error = ? WHERE item_id = ?').run(boardId, boardName, remainingErrors, itemId);
+}
+
+function saveCreatedBoardAndUpdateItem(db, { accountId, boardId, boardName, boardUrl, itemId }) {
+  const save = db.transaction(() => {
+    saveCreatedBoard(db, { accountId, boardId, boardName, boardUrl });
+    updateImportItemBoard(db, itemId, boardId, boardName);
+  });
+  save();
+}
+
 function getAccountSnapshot(db, bitWindowId) {
   const account = getAccountByWindow(db, bitWindowId);
   if (!account) return null;
@@ -219,7 +241,7 @@ function validateBoard(db, { accountId, boardId, boardName, boardUrl }) {
     SELECT * FROM boards
     WHERE account_id = ?
       AND (? IS NULL OR board_id = ?)
-      AND (? IS NULL OR board_name = ?)
+      AND (? IS NULL OR lower(board_name) = lower(?))
       AND (? IS NULL OR board_url = ?)
     LIMIT 1
   `).get(accountId, boardId ?? null, boardId ?? null, boardName ?? null, boardName ?? null, canonicalUrl, canonicalUrl);
@@ -348,4 +370,4 @@ function failDryRunAttempt(db, attemptId, { code, message, pageUrl, screenshotPa
   db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, last_screenshot_path = ?, error_code = ?, error_message = ?, updated_at = ? WHERE attempt_id = ?').run('failed', 'failed', pageUrl ?? null, screenshotPath ?? null, code, message, new Date().toISOString(), attemptId);
 }
 
-module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getAccountById, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };
+module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getAccountById, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };

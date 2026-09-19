@@ -30,7 +30,12 @@ test('blocks a dry run when the BitBrowser account does not match', async () => 
 
 test('rechecks Board before connecting to the browser', async () => {
   const service = serviceWith({ validateBoard: () => ({ valid: false }) });
-  await assert.rejects(() => service.run({ itemId: 'i1', bitWindowId: 'w1', cdpEndpoint: 'ws://test' }), { code: 'BOARD_MISSING' });
+  await assert.rejects(() => service.run({ itemId: 'i1', bitWindowId: 'w1', cdpEndpoint: 'ws://test' }), { code: 'BOARD_CREATION_CONFIRM_REQUIRED' });
+});
+
+test('asks for confirmation before creating a missing Board', async () => {
+  const service = serviceWith({ validateBoard: () => ({ valid: false }) });
+  await assert.rejects(() => service.run({ itemId: 'i1', bitWindowId: 'w1', cdpEndpoint: 'ws://test', allowCreateBoard: false }), { code: 'BOARD_CREATION_CONFIRM_REQUIRED' });
 });
 
 test('runs the single-task dry run to Publish-ready without clicking Publish', async () => {

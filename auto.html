@@ -1562,7 +1562,15 @@
             const account = item && Object.values(phase1State.accounts).find((candidate) => candidate.account_id === item.account_id);
             if (!account?.bit_window_id || !phase1State.cdpEndpoints[account.bit_window_id]) { toast('请先打开并识别该任务对应的 BitBrowser 窗口'); return; }
             try {
-                const result = await window.autoAPI.dryRun.start({ itemId, windowId: account.bit_window_id });
+                let result;
+                try {
+                    result = await window.autoAPI.dryRun.start({ itemId, windowId: account.bit_window_id, allowCreateBoard: false });
+                } catch (error) {
+                    const message = error?.message || '';
+                    if (error?.code !== 'BOARD_CREATION_CONFIRM_REQUIRED' && !/不存在 Board|是否创建/.test(message)) throw error;
+                    if (!window.confirm(`当前账号不存在 Board“${item.board}”，是否创建？`)) return;
+                    result = await window.autoAPI.dryRun.start({ itemId, windowId: account.bit_window_id, allowCreateBoard: true });
+                }
                 toast(result.status === 'ready_before_publish' ? '预演成功：已停在 Publish 前，未执行发布' : '预演已停止');
             } catch (error) { toast(error.message || '单任务预演失败'); }
         }
