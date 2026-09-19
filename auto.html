@@ -1,0 +1,1314 @@
+<!doctype html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>AUTO · 内容发布工作台</title>
+    <style>
+        :root {
+            --ink: #15211f;
+            --muted: #76817c;
+            --line: #e7eae5;
+            --paper: #f5f6f2;
+            --white: #fff;
+            --green: #d6f36a;
+            --deep: #203c34;
+            --mint: #eaf4e9;
+            --amber: #f7edce;
+            --rose: #f8e4e0;
+            --shadow: 0 16px 48px #1c31240d
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            margin: 0;
+            background: var(--paper);
+            color: var(--ink);
+            font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+            font-size: 14px
+        }
+
+        button,
+        input,
+        select {
+            font: inherit
+        }
+
+        button {
+            cursor: pointer
+        }
+
+        .app {
+            display: flex;
+            min-height: 100vh
+        }
+
+        .sidebar {
+            width: 236px;
+            background: #fff;
+            border-right: 1px solid var(--line);
+            padding: 24px 16px;
+            display: flex;
+            flex-direction: column;
+            flex-shrink: 0
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 11px;
+            padding: 0 9px 32px;
+            font-weight: 750;
+            font-size: 19px;
+            letter-spacing: -.5px
+        }
+
+        .brand-mark {
+            width: 32px;
+            height: 32px;
+            border-radius: 11px;
+            background: var(--deep);
+            display: grid;
+            place-items: center;
+            color: var(--green);
+            font-size: 19px
+        }
+
+        .brand small {
+            display: block;
+            color: #a1aaa4;
+            font-size: 9px;
+            letter-spacing: 2px;
+            margin-top: 3px
+        }
+
+        .nav-label {
+            font-size: 10px;
+            color: #a0a9a3;
+            letter-spacing: 1.3px;
+            font-weight: 700;
+            padding: 0 12px;
+            margin: 12px 0 8px
+        }
+
+        .nav {
+            display: flex;
+            flex-direction: column;
+            gap: 4px
+        }
+
+        .nav button {
+            border: 0;
+            background: transparent;
+            text-align: left;
+            padding: 11px 12px;
+            border-radius: 10px;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            color: #727c77;
+            font-weight: 550;
+            transition: .15s
+        }
+
+        .nav button:hover {
+            background: #f5f7f3;
+            color: var(--ink)
+        }
+
+        .nav button.active {
+            background: #eef4e8;
+            color: #1d352d;
+            font-weight: 700
+        }
+
+        .ico {
+            width: 18px;
+            text-align: center;
+            font-size: 16px
+        }
+
+        .badge {
+            margin-left: auto;
+            border-radius: 20px;
+            background: #e6eddd;
+            color: #405b2e;
+            padding: 2px 7px;
+            font-size: 10px
+        }
+
+        .side-bottom {
+            margin-top: auto
+        }
+
+        .profile {
+            border-top: 1px solid var(--line);
+            padding: 18px 7px 3px;
+            display: flex;
+            gap: 10px;
+            align-items: center
+        }
+
+        .avatar {
+            width: 34px;
+            height: 34px;
+            background: #e4eee1;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            font-weight: 700;
+            color: #385845
+        }
+
+        .profile b {
+            font-size: 12px
+        }
+
+        .profile small {
+            display: block;
+            color: var(--muted);
+            font-size: 10px;
+            margin-top: 3px
+        }
+
+        .main {
+            flex: 1;
+            min-width: 0
+        }
+
+        .topbar {
+            height: 70px;
+            background: #ffffffb8;
+            backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--line);
+            display: flex;
+            align-items: center;
+            padding: 0 38px;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 5
+        }
+
+        .crumb {
+            font-size: 13px;
+            color: var(--muted)
+        }
+
+        .crumb b {
+            color: var(--ink)
+        }
+
+        .top-right {
+            display: flex;
+            align-items: center;
+            gap: 16px
+        }
+
+        .demo-pill {
+            background: #fff7dc;
+            border: 1px solid #f0e2af;
+            color: #80621f;
+            border-radius: 30px;
+            padding: 7px 11px;
+            font-size: 11px;
+            font-weight: 650
+        }
+
+        .round-btn {
+            border: 1px solid var(--line);
+            background: white;
+            width: 34px;
+            height: 34px;
+            border-radius: 50%;
+            color: #65716a
+        }
+
+        .workspace {
+            max-width: 1380px;
+            padding: 32px 38px 54px;
+            margin: 0 auto
+        }
+
+        .page-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 25px
+        }
+
+        .eyebrow {
+            color: #78924c;
+            font-size: 10px;
+            letter-spacing: 1.5px;
+            font-weight: 750;
+            margin-bottom: 8px
+        }
+
+        .page-head h1 {
+            margin: 0;
+            font-size: 27px;
+            letter-spacing: -.8px
+        }
+
+        .sub {
+            color: var(--muted);
+            margin: 8px 0 0;
+            font-size: 13px
+        }
+
+        .btn {
+            border: 1px solid var(--line);
+            background: #fff;
+            border-radius: 9px;
+            padding: 10px 14px;
+            color: var(--ink);
+            font-weight: 650;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 4px #10201806
+        }
+
+        .btn:hover {
+            border-color: #b9c5b4;
+            transform: translateY(-1px)
+        }
+
+        .btn.primary {
+            background: var(--deep);
+            border-color: var(--deep);
+            color: white
+        }
+
+        .btn.lime {
+            background: var(--green);
+            border-color: var(--green);
+            color: #263226
+        }
+
+        .btn.small {
+            padding: 7px 10px;
+            font-size: 12px
+        }
+
+        .btn.text {
+            border: 0;
+            background: transparent;
+            box-shadow: none;
+            color: #64745f
+        }
+
+        .grid {
+            display: grid;
+            gap: 16px
+        }
+
+        .stats {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            margin-bottom: 18px
+        }
+
+        .card {
+            background: var(--white);
+            border: 1px solid var(--line);
+            border-radius: 14px;
+            box-shadow: var(--shadow)
+        }
+
+        .stat {
+            padding: 19px 20px;
+            position: relative
+        }
+
+        .stat-label {
+            color: var(--muted);
+            font-size: 12px
+        }
+
+        .stat-val {
+            font-size: 29px;
+            font-weight: 730;
+            letter-spacing: -1px;
+            margin: 9px 0 4px
+        }
+
+        .stat-foot {
+            font-size: 11px;
+            color: #8b9690
+        }
+
+        .stat-icon {
+            position: absolute;
+            right: 18px;
+            top: 17px;
+            width: 32px;
+            height: 32px;
+            border-radius: 10px;
+            display: grid;
+            place-items: center;
+            background: #f2f5ef;
+            color: #496749
+        }
+
+        .two-col {
+            grid-template-columns: minmax(0, 1.55fr) minmax(300px, .9fr)
+        }
+
+        .card-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 19px 21px 14px
+        }
+
+        .card-head h3 {
+            font-size: 14px;
+            margin: 0
+        }
+
+        .card-head p {
+            font-size: 11px;
+            color: var(--muted);
+            margin: 5px 0 0
+        }
+
+        .chart-wrap {
+            padding: 0 20px 17px
+        }
+
+        .chart-legend {
+            display: flex;
+            gap: 18px;
+            font-size: 10px;
+            color: var(--muted);
+            padding: 2px 0 10px
+        }
+
+        .dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: #668b64;
+            margin-right: 6px
+        }
+
+        .dot.pale {
+            background: #d9e8c1
+        }
+
+        .chart {
+            height: 160px;
+            width: 100%;
+            overflow: visible
+        }
+
+        .chart text {
+            font-size: 9px;
+            fill: #98a19b
+        }
+
+        .feed {
+            padding: 3px 20px 14px
+        }
+
+        .feed-row {
+            display: flex;
+            gap: 12px;
+            padding: 12px 0;
+            border-top: 1px solid #eff1ed;
+            align-items: center
+        }
+
+        .thumb {
+            width: 42px;
+            height: 42px;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #d6e9c6, #f0d6ac);
+            display: grid;
+            place-items: center;
+            font-size: 20px;
+            flex-shrink: 0
+        }
+
+        .thumb.t2 {
+            background: linear-gradient(140deg, #f1d8c2, #c7d9ca)
+        }
+
+        .thumb.t3 {
+            background: linear-gradient(140deg, #d0dfd1, #d8d1bc)
+        }
+
+        .feed-info {
+            min-width: 0;
+            flex: 1
+        }
+
+        .feed-info b {
+            font-size: 12px;
+            display: block
+        }
+
+        .feed-info small {
+            font-size: 10px;
+            color: var(--muted);
+            display: block;
+            margin-top: 5px
+        }
+
+        .status {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 10px;
+            font-weight: 700;
+            border-radius: 20px;
+            padding: 6px 9px;
+            white-space: nowrap
+        }
+
+        .status.green {
+            background: var(--mint);
+            color: #476544
+        }
+
+        .status.yellow {
+            background: var(--amber);
+            color: #886822
+        }
+
+        .status.red {
+            background: var(--rose);
+            color: #a04f40
+        }
+
+        .status.gray {
+            background: #f0f2ef;
+            color: #68736c
+        }
+
+        .status:before {
+            content: "";
+            width: 5px;
+            height: 5px;
+            border-radius: 50%;
+            background: currentColor
+        }
+
+        .quick {
+            padding: 7px 20px 18px
+        }
+
+        .quick button {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            gap: 12px;
+            background: none;
+            border: 0;
+            border-top: 1px solid #eff1ed;
+            padding: 15px 0;
+            text-align: left
+        }
+
+        .quick .qicon {
+            width: 34px;
+            height: 34px;
+            display: grid;
+            place-items: center;
+            border-radius: 10px;
+            background: #f4f6f1;
+            font-size: 16px
+        }
+
+        .quick b {
+            font-size: 12px
+        }
+
+        .quick small {
+            display: block;
+            color: var(--muted);
+            margin-top: 4px;
+            font-size: 10px
+        }
+
+        .arrow {
+            margin-left: auto;
+            color: #9ba69d
+        }
+
+        .banner {
+            background: var(--deep);
+            color: #f5f8f1;
+            border-radius: 14px;
+            padding: 18px 21px;
+            margin-bottom: 17px;
+            display: flex;
+            align-items: center;
+            gap: 16px
+        }
+
+        .banner-symbol {
+            font-size: 23px;
+            color: var(--green)
+        }
+
+        .banner-copy {
+            flex: 1
+        }
+
+        .banner-copy b {
+            font-size: 13px
+        }
+
+        .banner-copy span {
+            display: block;
+            color: #c7d4ca;
+            font-size: 11px;
+            margin-top: 5px
+        }
+
+        .banner .btn {
+            white-space: nowrap
+        }
+
+        .table-card {
+            overflow: hidden
+        }
+
+        .toolbar {
+            padding: 13px 19px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--line);
+            gap: 12px
+        }
+
+        .filters {
+            display: flex;
+            gap: 7px
+        }
+
+        .filter {
+            border: 1px solid var(--line);
+            background: white;
+            border-radius: 20px;
+            padding: 7px 11px;
+            font-size: 11px;
+            color: #727e75
+        }
+
+        .filter.on {
+            background: #edf3e7;
+            color: #3f5b35;
+            border-color: #dce8d1
+        }
+
+        .search {
+            border: 1px solid var(--line);
+            background: #fff;
+            border-radius: 8px;
+            padding: 8px 11px;
+            width: 190px;
+            font-size: 11px;
+            outline: none
+        }
+
+        .table-scroll {
+            overflow: auto
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            white-space: nowrap
+        }
+
+        th {
+            text-align: left;
+            background: #fbfcfa;
+            font-size: 10px;
+            letter-spacing: .3px;
+            color: #89938c;
+            padding: 12px 15px;
+            font-weight: 700;
+            border-bottom: 1px solid var(--line)
+        }
+
+        td {
+            padding: 13px 15px;
+            border-bottom: 1px solid #f0f2ef;
+            font-size: 12px
+        }
+
+        tbody tr:hover {
+            background: #fcfdfb
+        }
+
+        .product {
+            display: flex;
+            align-items: center;
+            gap: 10px
+        }
+
+        .product .thumb {
+            width: 39px;
+            height: 39px
+        }
+
+        .product b {
+            font-size: 12px;
+            display: block
+        }
+
+        .product small {
+            font-size: 10px;
+            color: var(--muted);
+            display: block;
+            margin-top: 4px
+        }
+
+        .check {
+            width: 14px;
+            height: 14px;
+            accent-color: #476a41
+        }
+
+        .table-foot {
+            padding: 12px 17px;
+            color: #929c95;
+            font-size: 10px;
+            display: flex;
+            justify-content: space-between
+        }
+
+        .workspace .emptyhint {
+            font-size: 11px;
+            color: #8d9890
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            padding: 18px
+        }
+
+        .day {
+            border: 1px solid #eef0ec;
+            border-radius: 11px;
+            min-height: 132px;
+            padding: 10px;
+            background: white
+        }
+
+        .day.today {
+            border-color: #9ab184;
+            background: #fbfdf8
+        }
+
+        .day-label {
+            font-size: 10px;
+            color: #87928a;
+            display: flex;
+            justify-content: space-between
+        }
+
+        .daynum {
+            font-size: 14px;
+            font-weight: 700;
+            color: #405044;
+            margin-top: 7px
+        }
+
+        .event {
+            background: #edf4e5;
+            color: #4a623f;
+            border-radius: 6px;
+            padding: 6px 7px;
+            font-size: 9px;
+            line-height: 1.4;
+            margin-top: 10px
+        }
+
+        .event.alt {
+            background: #f8efdd;
+            color: #806635
+        }
+
+        .event.gray {
+            background: #f0f2ef;
+            color: #66706a
+        }
+
+        .settings {
+            display: grid;
+            grid-template-columns: 210px 1fr;
+            gap: 15px
+        }
+
+        .setting-nav {
+            padding: 11px
+        }
+
+        .setting-nav button {
+            width: 100%;
+            text-align: left;
+            border: 0;
+            background: transparent;
+            border-radius: 8px;
+            padding: 11px;
+            color: #738078;
+            font-size: 12px
+        }
+
+        .setting-nav button.active {
+            background: #eff4e9;
+            color: #334c37;
+            font-weight: 700
+        }
+
+        .setting-body {
+            padding: 22px
+        }
+
+        .setting-body h3 {
+            margin: 0 0 6px;
+            font-size: 15px
+        }
+
+        .setting-body>p {
+            font-size: 11px;
+            color: var(--muted);
+            margin: 0 0 19px
+        }
+
+        .setting-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 0;
+            border-top: 1px solid #eff1ed
+        }
+
+        .setting-row b {
+            font-size: 12px
+        }
+
+        .setting-row small {
+            display: block;
+            color: var(--muted);
+            font-size: 10px;
+            margin-top: 5px
+        }
+
+        .toggle {
+            width: 36px;
+            height: 21px;
+            border-radius: 20px;
+            background: #dce2dc;
+            position: relative
+        }
+
+        .toggle:after {
+            content: "";
+            position: absolute;
+            width: 15px;
+            height: 15px;
+            background: white;
+            border-radius: 50%;
+            left: 3px;
+            top: 3px
+        }
+
+        .toggle.on {
+            background: #74965c
+        }
+
+        .toggle.on:after {
+            left: 18px
+        }
+
+        .accounts-grid {
+            grid-template-columns: repeat(3, 1fr)
+        }
+
+        .account {
+            padding: 19px
+        }
+
+        .account-top {
+            display: flex;
+            align-items: center;
+            gap: 11px
+        }
+
+        .account-logo {
+            width: 38px;
+            height: 38px;
+            background: #f3e7e3;
+            color: #a94133;
+            border-radius: 12px;
+            display: grid;
+            place-items: center;
+            font-weight: 800;
+            font-size: 19px
+        }
+
+        .account h3 {
+            font-size: 13px;
+            margin: 0
+        }
+
+        .account small {
+            font-size: 10px;
+            color: var(--muted);
+            display: block;
+            margin-top: 4px
+        }
+
+        .account-line {
+            border-top: 1px solid var(--line);
+            margin-top: 15px;
+            padding-top: 13px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            color: var(--muted)
+        }
+
+        .modal-backdrop {
+            position: fixed;
+            inset: 0;
+            background: #14221dcc;
+            z-index: 20;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 20px
+        }
+
+        .modal-backdrop.show {
+            display: flex
+        }
+
+        .modal {
+            background: white;
+            width: min(640px, 100%);
+            border-radius: 18px;
+            padding: 24px;
+            box-shadow: 0 30px 80px #07130d44
+        }
+
+        .modal-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start
+        }
+
+        .modal h2 {
+            font-size: 19px;
+            margin: 0
+        }
+
+        .modal .close {
+            border: 0;
+            background: #f3f5f2;
+            width: 31px;
+            height: 31px;
+            border-radius: 50%;
+            font-size: 18px;
+            color: #77817a
+        }
+
+        .steps {
+            display: flex;
+            gap: 0;
+            margin: 21px 0
+        }
+
+        .step {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #a0a9a2;
+            font-size: 10px
+        }
+
+        .step:not(:last-child):after {
+            content: "";
+            height: 1px;
+            background: #e6e9e4;
+            flex: 1;
+            margin: 0 10px
+        }
+
+        .step-num {
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            display: grid;
+            place-items: center;
+            background: #f0f2ef;
+            font-size: 10px
+        }
+
+        .step.current {
+            color: #385137;
+            font-weight: 700
+        }
+
+        .step.current .step-num {
+            background: var(--deep);
+            color: white
+        }
+
+        .dropzone {
+            border: 1.5px dashed #bac8b5;
+            border-radius: 12px;
+            background: #fbfcf8;
+            padding: 30px;
+            text-align: center;
+            transition: .2s
+        }
+
+        .dropzone.drag {
+            background: #eff7e9;
+            border-color: #65844e
+        }
+
+        .upload-icon {
+            font-size: 28px;
+            color: #78985e
+        }
+
+        .dropzone b {
+            display: block;
+            font-size: 13px;
+            margin: 10px 0 5px
+        }
+
+        .dropzone p {
+            font-size: 10px;
+            color: var(--muted);
+            margin: 0 0 13px
+        }
+
+        .file-chosen {
+            margin: 12px 0 0;
+            background: #eef5e9;
+            text-align: left;
+            padding: 11px;
+            border-radius: 8px;
+            font-size: 11px;
+            color: #40563d
+        }
+
+        .file-chosen:empty {
+            display: none
+        }
+
+        .modal-foot {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-top: 1px solid var(--line);
+            margin-top: 19px;
+            padding-top: 16px
+        }
+
+        .modal-foot small {
+            font-size: 10px;
+            color: var(--muted)
+        }
+
+        .toast {
+            position: fixed;
+            right: 24px;
+            bottom: 24px;
+            background: #193d32;
+            color: white;
+            padding: 13px 17px;
+            border-radius: 10px;
+            box-shadow: var(--shadow);
+            z-index: 40;
+            font-size: 12px;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: .25s
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1
+        }
+
+        .detail {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-top: 16px
+        }
+
+        .detail-box {
+            padding: 12px;
+            border: 1px solid var(--line);
+            border-radius: 9px
+        }
+
+        .detail-box small {
+            font-size: 10px;
+            color: var(--muted);
+            display: block;
+            margin-bottom: 6px
+        }
+
+        .detail-box b {
+            font-size: 12px
+        }
+
+        .hidden {
+            display: none !important
+        }
+
+        @media(max-width:900px) {
+            .sidebar {
+                width: 68px;
+                padding: 20px 9px
+            }
+
+            .brand {
+                padding: 0 8px 25px
+            }
+
+            .brand-name,
+            .nav-label,
+            .nav button .label,
+            .badge,
+            .profile>div:last-child {
+                display: none
+            }
+
+            .nav button {
+                justify-content: center;
+                padding: 12px 0
+            }
+
+            .ico {
+                font-size: 18px
+            }
+
+            .profile {
+                justify-content: center;
+                padding: 16px 0
+            }
+
+            .topbar {
+                padding: 0 22px
+            }
+
+            .workspace {
+                padding: 26px 22px
+            }
+
+            .stats {
+                grid-template-columns: repeat(2, 1fr)
+            }
+
+            .two-col {
+                grid-template-columns: 1fr
+            }
+
+            .accounts-grid {
+                grid-template-columns: repeat(2, 1fr)
+            }
+        }
+
+        @media(max-width:600px) {
+            .topbar {
+                padding: 0 14px
+            }
+
+            .workspace {
+                padding: 22px 14px
+            }
+
+            .page-head {
+                gap: 12px;
+                flex-direction: column
+            }
+
+            .stats {
+                gap: 9px
+            }
+
+            .stat {
+                padding: 15px
+            }
+
+            .stat-val {
+                font-size: 24px
+            }
+
+            .accounts-grid {
+                grid-template-columns: 1fr
+            }
+
+            .calendar-grid {
+                grid-template-columns: repeat(2, 1fr)
+            }
+
+            .settings {
+                grid-template-columns: 1fr
+            }
+
+            .toolbar {
+                align-items: flex-start;
+                flex-direction: column
+            }
+
+            .search {
+                width: 100%
+            }
+
+            .banner {
+                align-items: flex-start
+            }
+
+            .banner .btn {
+                font-size: 0;
+                padding: 8px
+            }
+
+            .banner .btn:after {
+                content: "去审核";
+                font-size: 11px
+            }
+
+            .step {
+                font-size: 9px
+            }
+
+            .step:not(:last-child):after {
+                margin: 0 4px
+            }
+
+            .step-num {
+                flex: none
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="app">
+        <aside class="sidebar">
+            <div class="brand"><span class="brand-mark">✳</span><span class="brand-name">AUTO<small>CONTENT
+                        STUDIO</small></span></div>
+            <div class="nav-label">工作区</div>
+            <nav class="nav"><button class="active" data-page="home"><span class="ico">⌂</span><span
+                        class="label">工作台</span></button><button data-page="import"><span class="ico">⇧</span><span
+                        class="label">导入素材</span></button><button data-page="queue"><span class="ico">☷</span><span
+                        class="label">任务队列</span><span class="badge">12</span></button><button data-page="issues"><span class="ico">!</span><span
+                        class="label">异常处理</span><span class="badge">3</span></button><button
+                    data-page="accounts"><span class="ico">◎</span><span class="label">账号管理</span></button><button
+                    data-page="history"><span class="ico">◷</span><span class="label">发布记录</span></button></nav>
+            <div class="side-bottom">
+                <div class="profile">
+                    <div class="avatar">林</div>
+                    <div><b>林同学</b><small>运营工作区</small></div><span style="margin-left:auto;color:#9aa49d">⌄</span>
+                </div>
+            </div>
+        </aside>
+        <main class="main">
+            <header class="topbar">
+                <div class="crumb">内容工作区 <span style="color:#c4cbc5;padding:0 8px">/</span> <b id="crumb">工作台</b></div>
+                <div class="top-right"><span class="demo-pill">● 演示模式 · 数据仅供体验</span><button class="round-btn"
+                        onclick="toast('这里是演示通知')">♧</button></div>
+            </header>
+            <section class="workspace" id="view"></section>
+        </main>
+    </div>
+    <div class="modal-backdrop" id="importModal">
+        <div class="modal">
+            <div class="modal-top">
+                <div>
+                    <div class="eyebrow">新建一批发布任务</div>
+                    <h2>选择素材文件夹</h2>
+                    <p class="sub">选择包含发布清单和视频素材的文件夹，系统会帮你整理成任务。</p>
+                </div><button class="close" onclick="closeImport()">×</button>
+            </div>
+            <div class="dropzone" id="dropzone">
+                <div class="upload-icon">▱</div><b>选择一个本地文件夹</b>
+                <p>建议文件夹中包含 pins.xlsx 和 media 视频目录；每个视频会生成一个独立 Pin，无需先压缩成 ZIP。</p><button class="btn small"
+                    onclick="document.getElementById('folderInput').click()">选择文件夹</button><input id="folderInput"
+                    type="file" webkitdirectory directory multiple class="hidden">
+                <div class="file-chosen" id="fileList"></div>
+            </div>
+            <div class="detail">
+                <div class="detail-box"><small>导入后会做什么</small><b>检查清单与素材，再预览将生成的任务</b></div>
+                <div class="detail-box"><small>Board 规则</small><b>账号先创建 Board，导入时填写名称，系统只校验和选择</b></div>
+            </div>
+            <div class="modal-foot"><small>选中文件只用于演示，不会上传到服务器</small>
+                <div style="display:flex;gap:8px"><button class="btn" onclick="closeImport()">取消</button><button
+                        class="btn primary" onclick="simulateImport()">检查素材并预览任务 →</button></div>
+            </div>
+        </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script>
+        const titles = { home: '工作台', import: '导入素材', queue: '任务队列', accounts: '账号管理', history: '发布记录' }; let page = 'home'; let started = false; let chosenFolder = '';
+
+        function head(kicker, title, desc, action = '') { return `<div class="page-head"><div><div class="eyebrow">${kicker}</div><h1>${title}</h1><p class="sub">${desc}</p></div>${action}</div>` }
+        function render() { document.getElementById('crumb').textContent = titles[page]; document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page)); let root = document.getElementById('view'); root.innerHTML = ({ home: home, import: importPage, queue: queue, accounts: accounts, history: history })[page](); }
+        function home() { return `${head('今日工作', '工作台', '今天要发布的内容都在这里。先导入一批素材，再开始处理任务。', `<button class="btn primary" onclick="openImport()">⇧ 导入素材文件夹</button>`)}<div class="grid stats"><div class="card stat"><div class="stat-label">今日待处理</div><div class="stat-val">12</div><div class="stat-foot">来自最近导入的批次</div></div><div class="card stat"><div class="stat-label">处理中</div><div class="stat-val">${started ? '3' : '0'}</div><div class="stat-foot">单账号按顺序处理</div></div><div class="card stat"><div class="stat-label">今日已完成</div><div class="stat-val">8</div><div class="stat-foot">来自 3 个账号</div></div><div class="card stat"><div class="stat-label">需要处理</div><div class="stat-val">2</div><div class="stat-foot">失败或需要人工确认</div></div></div><div class="grid two-col"><div class="card"><div class="card-head"><div><h3>当前任务批次</h3><p>秋季家居素材 · 今天 09:20 导入</p></div><span class="status ${started ? 'green' : 'yellow'}">${started ? '正在处理' : '待开始'}</span></div><div style="padding:2px 21px 19px"><div style="display:flex;justify-content:space-between;font-size:11px;color:#748078"><span>${started ? '3' : '0'} / 12 条完成</span><span>${started ? '25' : '0'}%</span></div><div style="height:7px;background:#edf0eb;border-radius:9px;margin:9px 0 17px"><div style="width:${started ? '25' : '0'}%;height:7px;background:#78975b;border-radius:9px"></div></div><div class="feed-row"><div class="thumb">🪴</div><div class="feed-info"><b>桌面绿植架 · P001-V01</b><small>Pinterest-01 · 春日家居</small></div><span class="status ${started ? 'green' : 'gray'}">${started ? '已完成' : '待处理'}</span></div><div class="feed-row"><div class="thumb t2">🧺</div><div class="feed-info"><b>棉麻收纳篮 · P002-V01</b><small>Pinterest-02 · 整理收纳</small></div><span class="status ${started ? 'yellow' : 'gray'}">${started ? '处理中' : '待处理'}</span></div><div style="display:flex;justify-content:flex-end;gap:8px;margin-top:15px"><button class="btn" onclick="go('queue')">查看全部任务</button><button class="btn primary" onclick="startBatch()">${started ? 'Ⅱ 暂停处理' : '▶ 开始处理'}</button></div></div></div><div class="card"><div class="card-head"><div><h3>账号状态</h3><p>异常账号会暂停对应任务</p></div><button class="btn text small" onclick="go('accounts')">管理账号 →</button></div><div class="feed"><div class="feed-row"><div class="account-logo">P</div><div class="feed-info"><b>Pinterest-01</b><small>春日家居 · 当前空闲</small></div><span class="status green">可用</span></div><div class="feed-row"><div class="account-logo">P</div><div class="feed-info"><b>Pinterest-02</b><small>居家灵感 · 需要人工确认</small></div><span class="status yellow">待处理</span></div><div class="feed-row"><div class="account-logo">P</div><div class="feed-info"><b>Pinterest-03</b><small>慢生活研究所 · 当前空闲</small></div><span class="status green">可用</span></div></div><div style="padding:0 20px 17px"><div style="padding:12px;background:#f6f8f3;border-radius:9px;font-size:10px;line-height:1.6;color:#7a857d">如果发布结果不明确或账号需要验证，相关任务会暂停并提示人工处理。</div></div></div></div>` }
+        function importPage() { return `${head('导入素材', '导入素材文件夹', '从电脑选择一个文件夹，检查素材后生成任务。', `<button class="btn primary" onclick="openImport()">＋ 选择文件夹</button>`)}<div class="card" style="padding:23px"><div class="dropzone" id="dropzonePage"><div class="upload-icon">▱</div><b>${chosenFolder || '还没有选择素材文件夹'}</b><p>选中后会检查 pins.xlsx 清单和 media 视频文件，并展示准备生成的任务。</p><button class="btn small" onclick="document.getElementById('folderInput').click()">选择文件夹</button><div class="file-chosen" id="pageFileList"></div></div><div class="grid two-col" style="margin-top:18px"><div class="detail-box"><small>推荐文件夹结构</small><b>批次文件夹 / pins.xlsx + media / 视频文件</b></div><div class="detail-box"><small>导入过程</small><b>选文件夹 → 检查清单 → 预览任务 → 加入队列</b></div></div><p class="emptyhint" style="margin:14px 2px 0">不需要 ZIP。实际桌面版可以直接打开系统文件夹选择窗口；本原型用浏览器文件夹选择控件演示。</p></div>` }
+        function queue() { let rows = [['桌面绿植架', 'P001-V01 · 阳台布置演示', 'Pinterest-01', '春日家居', '已完成', 'green', '🪴'], ['桌面绿植架', 'P001-V02 · 小户型桌面整理', 'Pinterest-02', '小空间灵感', '待处理', 'gray', '🪴'], ['棉麻收纳篮', 'P002-V01 · 换季衣物整理', 'Pinterest-01', '整理收纳', '待处理', 'gray', '🧺'], ['玻璃香薰蜡烛', 'P003-V02 · 夜间放松仪式', 'Pinterest-03', '慢生活', '结果待确认', 'yellow', '🕯️'], ['松木收纳架', 'P004-V03 · 玄关收纳思路', 'Pinterest-02', '家居灵感', '账号需验证', 'red', '🌿']]; return `${head('正在处理', '任务队列', '所有任务按账号分开排队；遇到异常时只暂停受影响的任务。', `<button class="btn primary" onclick="startBatch()">${started ? 'Ⅱ 暂停处理' : '▶ 开始处理'}</button>`)}<div class="banner" style="background:#eef4e8;color:#324b35"><span class="banner-symbol" style="color:#789653">☷</span><div class="banner-copy"><b>12 条任务 · 3 个账号</b><span style="color:#71816f">同一账号依次处理；不同账号按当前工作能力并行。结果不明确时暂停，不自动重复提交。</span></div><button class="btn small" onclick="toast('队列已刷新')">⟳ 刷新</button></div><div class="card table-card"><div class="toolbar"><div class="filters"><button class="filter on" onclick="setFilter(this)">全部 · 12</button><button class="filter" onclick="setFilter(this)">待处理 · 9</button><button class="filter" onclick="setFilter(this)">需确认 · 2</button></div><input class="search" placeholder="⌕ 搜索产品、账号或状态" oninput="filterRows(this.value,'queueTable')"></div><div class="table-scroll"><table id="queueTable"><thead><tr><th>任务</th><th>目标账号 / Board</th><th>状态</th><th>操作</th></tr></thead><tbody>${rows.map(r => `<tr><td><div class="product"><div class="thumb">${r[6]}</div><div><b>${r[0]}</b><small>${r[1]}</small></div></div></td><td>${r[2]} · ${r[3]}</td><td><span class="status ${r[5]}">${started && r[4] === '待处理' ? '处理中' : r[4]}</span></td><td><button class="btn small" onclick="toast('${r[4] === '账号需验证' ? '请在 Pinterest 中完成验证后再恢复任务' : '已打开任务详情'}')">${r[4] === '结果待确认' ? '核对结果' : r[4] === '账号需验证' ? '查看处理方式' : '详情'}</button></td></tr>`).join('')}</tbody></table></div><div class="table-foot"><span>演示展示 5 / 12 条任务</span><span>任务完成后可在发布记录查看结果</span></div></div>` }
+        function accounts() { return `${head('账号连接', '账号管理', '查看账号是否可用；账号验证由账号持有人在 Pinterest 中完成。', `<button class="btn" onclick="toast('真实连接流程暂不接入')">＋ 添加账号</button>`)}<div class="grid accounts-grid">${[['Pinterest-01', '春日家居灵感', '正常', '4 个 Board', '可接收任务'], ['Pinterest-02', '居家灵感', '需要人工确认', '3 个 Board', '相关任务已暂停'], ['Pinterest-03', '慢生活研究所', '正常', '5 个 Board', '可接收任务']].map((a, i) => `<div class="card account"><div class="account-top"><div class="account-logo">P</div><div><h3>${a[0]}</h3><small>${a[1]}</small></div><span style="margin-left:auto" class="status ${i === 1 ? 'yellow' : 'green'}">${a[2]}</span></div><div class="account-line"><span>${a[3]}</span><span>${a[4]}</span></div></div>`).join('')}</div><div style="margin-top:15px;padding:14px 17px;background:#fff7dc;border:1px solid #f0e2af;border-radius:11px;color:#80621f;font-size:11px;line-height:1.6">需要验证时，请在 Pinterest 正常完成验证。本工具不会尝试跳过验证。</div>` }
+        function history() { return `${head('最近任务', '发布记录', '查看已完成或需要人工处理的任务。', `<button class="btn" onclick="toast('演示记录已导出')">⇩ 导出记录</button>`)}<div class="card table-card"><div class="toolbar"><div class="filters"><button class="filter on" onclick="setFilter(this)">全部记录</button><button class="filter" onclick="setFilter(this)">已完成</button><button class="filter" onclick="setFilter(this)">需处理</button></div><input class="search" placeholder="⌕ 搜索产品、账号或时间" oninput="filterRows(this.value,'historyTable')"></div><div class="table-scroll"><table id="historyTable"><thead><tr><th>产品 / 素材</th><th>账号 / Board</th><th>时间</th><th>状态</th><th>操作</th></tr></thead><tbody><tr><td><div class="product"><div class="thumb">🪴</div><div><b>桌面绿植架</b><small>P001-V01</small></div></div></td><td>Pinterest-01 · 春日家居</td><td>今天 10:32</td><td><span class="status green">已完成</span></td><td><button class="btn small" onclick="toast('演示记录详情')">详情</button></td></tr><tr><td><div class="product"><div class="thumb t2">🧺</div><div><b>棉麻收纳篮</b><small>P002-V01</small></div></div></td><td>Pinterest-03 · 整理收纳</td><td>今天 10:06</td><td><span class="status green">已完成</span></td><td><button class="btn small" onclick="toast('演示记录详情')">详情</button></td></tr><tr><td><div class="product"><div class="thumb t3">🕯️</div><div><b>玻璃香薰蜡烛</b><small>P003-V02</small></div></div></td><td>Pinterest-02 · 慢生活</td><td>今天 09:41</td><td><span class="status yellow">结果待确认</span></td><td><button class="btn small" onclick="go('queue')">去核对</button></td></tr></tbody></table></div><div class="table-foot"><span>演示记录</span><span>1 / 1</span></div></div>` }
+        function go(p) { page = p; render(); window.scrollTo(0, 0) } function toast(t) { let el = document.getElementById('toast'); el.textContent = t; el.classList.add('show'); clearTimeout(window.toastTimer); window.toastTimer = setTimeout(() => el.classList.remove('show'), 2600) } function openImport() { document.getElementById('importModal').classList.add('show') } function closeImport() { document.getElementById('importModal').classList.remove('show') } function simulateImport() { closeImport(); toast('素材检查完成：已生成 12 条演示任务'); go('queue') } function startBatch() { started = !started; toast(started ? '队列已开始处理（演示）' : '已暂停后续任务（演示）'); render() } function filterRows(q, id) { document.querySelectorAll(`#${id} tbody tr`).forEach(r => r.style.display = r.textContent.toLowerCase().includes(q.toLowerCase()) ? '' : 'none') } function setFilter(el) { el.parentElement.querySelectorAll('.filter').forEach(f => f.classList.remove('on')); el.classList.add('on') } function showFolder(files, targetId) { let list = [...files]; let first = list[0]?.webkitRelativePath || list[0]?.name || ''; chosenFolder = first.split('/')[0] || '已选择文件夹'; let video = list.filter(f => /\.(mp4|mov|m4v)$/i.test(f.name)).length; let sheet = list.some(f => /\.xlsx?$/i.test(f.name)); let summary = `✓ ${chosenFolder} · ${list.length} 个文件\n${sheet ? '✓ 找到表格清单' : '! 未找到 xlsx 清单'} · ${video} 个视频素材`; document.getElementById(targetId).textContent = summary; let pageList = document.getElementById('pageFileList'); if (pageList) pageList.textContent = summary } document.querySelectorAll('.nav button').forEach(b => b.addEventListener('click', () => go(b.dataset.page))); document.getElementById('folderInput').addEventListener('change', e => showFolder(e.target.files, 'fileList')); document.getElementById('importModal').addEventListener('click', e => { if (e.target === e.currentTarget) closeImport() }); render();
+    </script>
+    <script>
+        /* v1 flow additions: review gate, evidence review, exception center, duplicate guard */
+        const v1Titles = { home: '工作台', import: '导入素材', review: '导入素材', queue: '任务队列', issues: '异常处理', accounts: '账号管理', history: '发布记录' };
+        const originalRender = render;
+        function v1Render() {
+            document.getElementById('crumb').textContent = v1Titles[page] || '工作台';
+            document.querySelectorAll('.nav button').forEach(b => b.classList.toggle('active', b.dataset.page === page));
+            const views = { home, import: importPageV1, review: importPageV1, queue: queueV1, issues: issuesPage, accounts: accountsV1, history };
+            const root = document.getElementById('view');
+            root.innerHTML = (views[page] || home)();
+            if (page === 'home') root.insertAdjacentHTML('afterbegin', `<div class="banner" style="background:#eef4e8;color:#324b35"><span class="banner-symbol" style="color:#789653">1</span><div class="banner-copy"><b>当前演示流程：先连接账号，再导入和确认任务</b><span style="color:#71816f">① 连接比特浏览器　② 导入素材　③ 预览并修改　④ 确认排队　⑤ 核验结果</span></div><button class="btn small" onclick="go('accounts')">从账号连接开始 →</button></div>`);
+        }
+        render = v1Render;
+        const confirmedBatches = new Set();
+        function importPageV1() { const batch = (id, product, asset, account, board, thumb, note) => { const done = confirmedBatches.has(id); return `<div class="card" style="margin-top:12px"><div class="card-head"><div><div class="card-title">批次 ${id} · ${product}</div><div class="card-sub">1 个产品 · 1 条视频 · ${account}</div></div><span class="status ${done ? 'green' : 'yellow'}">${done ? '已加入队列' : '待确认'}</span></div><div class="card-body"><div class="feed-row" style="border-top:0;padding-top:0"><div class="thumb ${thumb}">▶</div><div class="feed-info"><b>${asset}</b><small>${account} · ${board} · ${note}</small></div><button class="btn small" onclick="editBatch('${id}')">修改</button></div><div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="btn ${done ? '' : 'primary'} small" ${done ? 'disabled' : ''} onclick="confirmBatch('${id}')">${done ? '已确认' : '确认本批并加入队列'}</button></div></div></div>` }; return `${head('导入素材', '导入素材文件夹', '选择文件夹后，系统会按批次展示预览；每批确认后分别加入任务队列。', `<button class="btn primary" onclick="openImport()">＋ 选择文件夹</button>`)}<div class="card" style="padding:23px"><div class="dropzone"><div class="upload-icon">▱</div><b>${chosenFolder || '还没有选择素材文件夹'}</b><p>每个视频会生成一个独立 Pin。导入后按产品批次预览，可以逐批修改和确认。</p><button class="btn small" onclick="document.getElementById('folderInput').click()">选择文件夹</button></div><div class="grid two-col" style="margin-top:18px"><div class="detail-box"><small>推荐文件夹结构</small><b>批次文件夹 / pins.xlsx + media / 视频文件</b></div><div class="detail-box"><small>Board 规则</small><b>账号先创建 Board，导入时填写名称，系统只做匹配</b></div></div></div><div style="margin-top:22px"><div class="eyebrow">导入后的批次预览</div>${batch('01','桌面绿植架','P001-V01.mp4','Pinterest-01','春日家居','', '标题、描述和链接已填写')}${batch('02','棉麻收纳篮','P002-V01.mp4','Pinterest-02','整理收纳','t2', 'Board 已匹配，可直接确认')}</div>` }
+        function accountsV1() { return `${head('账号连接', '账号管理', '先在比特浏览器中登录并配置代理，再把已登录窗口绑定到 AUTO。', `<button class="btn primary" onclick="connectBitBrowser()">＋ 连接比特浏览器</button>`)}<div class="banner" style="background:#eef4e8;color:#324b35"><span class="banner-symbol" style="color:#789653">◎</span><div class="banner-copy"><b>连接规则</b><span style="color:#71816f">每个窗口对应一个 Pinterest 账号和一条代理线路；AUTO 不保存密码或 Cookie。</span></div><button class="btn small" onclick="connectBitBrowser()">读取窗口列表</button></div><div class="grid accounts-grid">${[['Pinterest-01','春日家居灵感','已连接 · 窗口 01','美国 · 固定代理','4 个 Board · 已校验','green'],['Pinterest-02','居家灵感','已连接 · 窗口 02','美国 · 固定代理','3 个 Board · 需验证','yellow'],['Pinterest-03','慢生活研究所','已连接 · 窗口 03','加拿大 · 固定代理','5 个 Board · 已校验','green']].map(a=>`<div class="card account"><div class="account-top"><div class="account-logo">P</div><div><h3>${a[0]}</h3><small>${a[1]}</small></div><span style="margin-left:auto" class="status ${a[5]}">${a[2].split(' · ')[0]}</span></div><div class="account-line"><span>${a[3]}</span><span>${a[4]}</span></div><div style="margin-top:13px;font-size:10px;color:#7b867e">${a[2].split(' · ')[1]}</div></div>`).join('')}</div><div style="margin-top:15px;padding:14px 17px;background:#fff7dc;border:1px solid #f0e2af;border-radius:11px;color:#80621f;font-size:11px;line-height:1.6">账号需验证时，请先在对应比特浏览器窗口中完成 Pinterest 验证，再回到 AUTO 重新检查。AUTO 不尝试绕过验证。</div>` }
+        function reviewPage() { return `${head('导入预览', '导入预览', '每批导入后先查看和修改任务，确认后才会进入发布队列。', `<button class="btn primary" onclick="approveAll()">✓ 确认这批任务</button>`)}<div class="banner" style="background:#fff7dc;color:#80621f"><span class="banner-symbol" style="color:#b08431">!</span><div class="banner-copy"><b>当前批次有 2 条任务需要处理</b><span style="color:#80621f">Board、标题、描述和链接都可以在这里修改。</span></div><button class="btn small" onclick="toast('已重新检查字段和重复任务')">重新检查</button></div><div class="card table-card"><div class="toolbar"><div class="filters"><button class="filter on">待确认 · 2</button><button class="filter">已确认 · 10</button></div><span class="emptyhint">确认后批量进入任务队列</span></div><div class="table-scroll"><table><thead><tr><th>任务</th><th>发布内容</th><th>目标账号 / Board</th><th>检查项</th><th>操作</th></tr></thead><tbody><tr><td><div class="product"><div class="thumb">🌿</div><div><b>松木收纳架</b><small>P004-V03 · 12 秒视频</small></div></div></td><td>玄关收纳思路<br><small class="muted">链接已填写 · 描述 86 字</small></td><td>Pinterest-02<br><span class="muted">Board 未映射</span></td><td><span class="status yellow">需要处理</span></td><td><button class="btn small" onclick="editReview()">修改任务</button></td></tr><tr><td><div class="product"><div class="thumb t2">🧺</div><div><b>棉麻收纳篮</b><small>P002-V02 · 15 秒视频</small></div></div></td><td>换季衣物整理<br><small class="muted">链接已填写 · 描述 92 字</small></td><td>Pinterest-01<br><span class="muted">整理收纳</span></td><td><span class="status green">已检查</span></td><td><button class="btn small" onclick="approveOne()">确认任务</button></td></tr></tbody></table></div><div class="table-foot"><span>修改完成后可以确认整批任务</span><span>确认后进入队列，不再重复检查</span></div></div>` }
+        function queueV1() { return `${head('正在处理', '任务队列', '已确认的任务按账号分开排队；异常任务会暂停，不会自动重复提交。', `<button class="btn primary" onclick="startBatch()">${started ? 'Ⅱ 暂停处理' : '▶ 开始处理'}</button>`)}<div class="banner" style="background:#eef4e8;color:#324b35"><span class="banner-symbol" style="color:#789653">☷</span><div class="banner-copy"><b>10 条已确认任务 · 3 个账号</b><span style="color:#71816f">同一账号依次处理；结果不明确时进入异常中心，禁止自动重传。</span></div><button class="btn small" onclick="toast('队列已刷新')">⟳ 刷新</button></div><div class="card table-card"><div class="toolbar"><div class="filters"><button class="filter on">全部 · 12</button><button class="filter">待处理 · 9</button><button class="filter">需确认 · 2</button></div><input class="search" placeholder="⌕ 搜索产品、账号或状态" oninput="filterRows(this.value,'queueTable')"></div><div class="table-scroll"><table id="queueTable"><thead><tr><th>任务 / 内容版本</th><th>目标账号 / Board</th><th>状态</th><th>防重复检查</th><th>操作</th></tr></thead><tbody><tr><td><div class="product"><div class="thumb">🪴</div><div><b>桌面绿植架</b><small>P001-V01 · v1</small></div></div></td><td>Pinterest-01 · 春日家居</td><td><span class="status green">已完成</span></td><td><span class="status green">已记账</span></td><td><button class="btn small" onclick="showEvidence('桌面绿植架 · P001-V01','已确认发布')">证据</button></td></tr><tr><td><div class="product"><div class="thumb t3">🕯️</div><div><b>玻璃香薰蜡烛</b><small>P003-V02 · v1</small></div></div></td><td>Pinterest-03 · 慢生活</td><td><span class="status yellow">结果待确认</span></td><td><span class="status yellow">已锁定</span></td><td><button class="btn small" onclick="showEvidence('玻璃香薰蜡烛 · P003-V02','结果不明确，禁止重传')">去核验</button></td></tr><tr><td><div class="product"><div class="thumb">🌿</div><div><b>松木收纳架</b><small>P004-V03 · v1</small></div></div></td><td>Pinterest-02 · Board 未映射</td><td><span class="status gray">导入预览</span></td><td><span class="status gray">未执行</span></td><td><button class="btn small" onclick="go('review')">去预览</button></td></tr></tbody></table></div></div>` }
+        function issuesPage() { return `${head('人工处理中心', '异常处理', '只处理需要人工判断的任务；系统不会在结果不明时自动重传。', `<button class="btn" onclick="toast('异常列表已刷新')">⟳ 刷新</button>`)}<div class="grid two-col"><div class="card"><div class="card-head"><div><h3>结果待核验 · 1</h3><p>点击过 Publish，但页面没有返回明确结果</p></div><span class="status yellow">高优先级</span></div><div class="feed"><div class="feed-row"><div class="thumb t3">🕯️</div><div class="feed-info"><b>玻璃香薰蜡烛 · P003-V02</b><small>Pinterest-03 · 慢生活 · 尝试 #A-1042</small></div><button class="btn small" onclick="showEvidence('玻璃香薰蜡烛 · P003-V02','结果不明确，禁止重传')">查看证据</button></div></div></div><div class="card"><div class="card-head"><div><h3>账号需要处理 · 1</h3><p>账号验证会暂停该账号全部任务</p></div><span class="status red">已暂停</span></div><div class="feed"><div class="feed-row"><div class="account-logo">P</div><div class="feed-info"><b>Pinterest-02</b><small>检测到身份验证页面 · 3 条任务受影响</small></div><button class="btn small" onclick="resumeAccount()">处理账号</button></div></div></div></div>` }
+        function showEvidence(task, result) { document.getElementById('importModal').classList.add('show'); document.querySelector('#importModal .modal').innerHTML = `<div class="modal-top"><div><div class="eyebrow">发布尝试 #A-1042</div><h2>核验发布结果</h2><p class="sub">${task}</p></div><button class="close" onclick="closeImport()">×</button></div><div class="detail"><div class="detail-box"><small>执行到的最后一步</small><b>已点击 Publish · 等待页面确认</b></div><div class="detail-box"><small>页面 URL</small><b class="muted">暂无明确 Pin URL</b></div><div class="detail-box"><small>证据</small><b>发布前截图 · 发布后截图 · 页面状态 HTML</b></div><div class="detail-box"><small>防重复状态</small><b style="color:#a04f40">已锁定，禁止自动重传</b></div></div><div style="margin-top:16px;padding:12px;background:#fff7dc;border-radius:9px;color:#80621f;font-size:11px;line-height:1.6">${result}。请先在 Pinterest 页面人工确认，再选择结果。</div><div class="modal-foot"><small>确认后会写入发布账本并保留本次尝试记录</small><div style="display:flex;gap:8px"><button class="btn" onclick="closeImport()">暂不处理</button><button class="btn" onclick="confirmUnpublished()">确认未发布并重试</button><button class="btn primary" onclick="confirmPublished()">确认已发布</button></div></div>` }
+        function confirmPublished() { closeImport(); toast('已写入发布账本，任务标记为已发布'); }
+        function confirmUnpublished() { closeImport(); toast('已保留原尝试，创建新的发布尝试'); }
+        function editReview() { document.getElementById('importModal').classList.add('show'); document.querySelector('#importModal .modal').innerHTML = `<div class="modal-top"><div><div class="eyebrow">导入预览</div><h2>修改这条任务</h2><p class="sub">松木收纳架 · P004-V03 · Pinterest-02</p></div><button class="close" onclick="closeImport()">×</button></div><div class="detail-box"><small>选择可用 Board</small><select style="width:100%;margin-top:4px;border:1px solid var(--line);border-radius:7px;padding:10px;background:#fff"><option>玄关收纳</option><option>家居灵感</option></select></div><div class="detail-box" style="margin-top:10px"><small>防重复检查</small><b>未发现相同账号、Board、产品和素材版本的发布记录</b></div><div class="modal-foot"><small>保存后回到这批任务的预览</small><button class="btn primary" onclick="approveOne()">保存修改</button></div>` }
+        function approveOne() { closeImport(); toast('修改已保存，这条任务已确认并进入队列'); go('queue'); }
+        function approveAll() { toast('当前批次已确认，进入任务队列'); go('queue'); }
+        function confirmBatch(id) { confirmedBatches.add(id); toast('批次 ' + id + ' 已加入任务队列'); render(); }
+        function editBatch(id) { editReview(); }
+        function connectBitBrowser() { document.getElementById('importModal').classList.add('show'); document.querySelector('#importModal .modal').innerHTML = `<div class="modal-top"><div><div class="eyebrow">账号连接</div><h2>连接比特浏览器</h2><p class="sub">演示读取本机已打开的浏览器窗口，不会读取密码或 Cookie。</p></div><button class="close" onclick="closeImport()">×</button></div><div class="detail"><div class="detail-box"><small>连接状态</small><b style="color:#476a41">已连接到本机比特浏览器</b></div><div class="detail-box"><small>发现窗口</small><b>3 个可连接窗口 · 2 个账号已识别</b></div></div><div style="margin-top:14px"><div class="feed-row"><div class="account-logo">P</div><div class="feed-info"><b>窗口 04 · Pinterest-04</b><small>美国 · 固定代理 · 登录状态正常</small></div><button class="btn small" onclick="bindWindow('Pinterest-04')">绑定账号</button></div><div class="feed-row"><div class="account-logo">P</div><div class="feed-info"><b>窗口 05 · 未识别</b><small>美国 · 固定代理 · 需要先登录 Pinterest</small></div><button class="btn small" onclick="toast('请先在该比特浏览器窗口登录 Pinterest')">查看</button></div></div><div class="modal-foot"><small>绑定后会读取该账号的登录状态和 Board 列表</small><button class="btn" onclick="closeImport()">关闭</button></div>` }
+        function bindWindow(name) { closeImport(); toast(name + ' 已绑定，正在校验登录状态和 Board'); }
+        function resumeAccount() { toast('请先在比特浏览器中完成验证，再恢复账号'); }
+        function go(p) { page = p; render(); window.scrollTo(0, 0); }
+        function showFolder(files, targetId) { let list = [...files]; let first = list[0]?.webkitRelativePath || list[0]?.name || ''; chosenFolder = first.split('/')[0] || '已选择文件夹'; let video = list.filter(f => /\.(mp4|mov|m4v)$/i.test(f.name)).length; let sheet = list.some(f => /\.xlsx?$/i.test(f.name)); let summary = `✓ ${chosenFolder} · ${list.length} 个文件\n${sheet ? '✓ 找到表格清单' : '! 未找到 xlsx 清单'} · ${video} 个视频素材`; let target = document.getElementById(targetId); if (target) target.textContent = summary; if (page === 'import') render(); }
+        render();
+    </script>
+</body>
+
+</html>
