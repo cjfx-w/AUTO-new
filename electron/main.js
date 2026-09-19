@@ -1,11 +1,14 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
 const { BitBrowserClient } = require('../src/bitbrowser/client');
-const { initDatabase, saveBitBrowserWindows } = require('../src/storage/database');
+const { PinterestAccountBoardService } = require('../src/pinterest/account-board');
+const storage = require('../src/storage/database');
 
 let mainWindow;
 let bitBrowserClient;
 let database;
+let accountBoardService;
 const activeCdpEndpoints = new Map();
 
 function createWindow() {
@@ -37,7 +40,7 @@ function registerIpc() {
     assertTrustedSender(event);
     if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new Error('窗口列表参数不正确。');
     const result = await bitBrowserClient.listWindows(input);
-    saveBitBrowserWindows(database, result.windows);
+    storage.saveBitBrowserWindows(database, result.windows);
     return result;
   });
   ipcMain.handle('bitbrowser:open', async (event, input) => {
@@ -54,11 +57,56 @@ function registerIpc() {
     activeCdpEndpoints.delete(result.window_id);
     return result;
   });
+  ipcMain.handle('account:identify', async (event, input) => {
+    assertTrustedSender(event);
+    const request = validateAccountWindowInput(input);
+    return accountBoardService.identifyAccount({ bitWindowId: request.windowId, ...request, cdpEndpoint: activeCdpEndpoints.get(request.windowId) });
+  });
+  ipcMain.handle('account:sync-boards', async (event, input) => {
+    assertTrustedSender(event);
+    const request = validateAccountWindowInput(input);
+    return accountBoardService.syncBoards({ bitWindowId: request.windowId, ...request, cdpEndpoint: activeCdpEndpoints.get(request.windowId) });
+  });
+  ipcMain.handle('account:get-boards', (event, accountId) => {
+    assertTrustedSender(event);
+    if (typeof accountId !== 'string' || !accountId.trim()) throw new Error('账号参数不正确。');
+    return accountBoardService.getBoards(accountId);
+  });
+  ipcMain.handle('account:get-snapshot', (event, windowId) => {
+    assertTrustedSender(event);
+    if (typeof windowId !== 'string' || !windowId.trim()) throw new Error('窗口参数不正确。');
+    return storage.getAccountSnapshot(database, windowId);
+  });
+  ipcMain.handle('account:validate-board', (event, input) => {
+    assertTrustedSender(event);
+    if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.accountId !== 'string') throw new Error('Board 校验参数不正确。');
+    return accountBoardService.validateBoard(input);
+  });
+}
+
+function validateAccountWindowInput(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.windowId !== 'string' || !input.windowId.trim()) {
+    throw new Error('窗口参数不正确。');
+  }
+  return { windowId: input.windowId, windowName: typeof input.windowName === 'string' ? input.windowName : '' };
 }
 
 app.whenReady().then(() => {
-  database = initDatabase(path.join(app.getPath('userData'), 'auto.sqlite3'));
+  const userDataPath = app.getPath('userData');
+  database = storage.initDatabase(path.join(userDataPath, 'auto.sqlite3'));
   bitBrowserClient = new BitBrowserClient();
+  const screenshotDir = path.join(userDataPath, 'diagnostics', 'phase-02');
+  fs.mkdirSync(screenshotDir, { recursive: true });
+  accountBoardService = new PinterestAccountBoardService({
+    storage: {
+      saveAccountAndBoards: (snapshot) => storage.saveAccountAndBoards(database, snapshot),
+      saveAccountBinding: (account) => storage.saveAccountBinding(database, account),
+      markBoardSyncFailed: (input) => storage.markBoardSyncFailed(database, input),
+      getBoards: (accountId) => storage.getBoards(database, accountId),
+      validateBoard: (input) => storage.validateBoard(database, input)
+    },
+    screenshotDir
+  });
   registerIpc();
   createWindow();
 

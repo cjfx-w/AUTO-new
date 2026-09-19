@@ -1318,6 +1318,7 @@
             error: '',
             windows: [],
             cdpEndpoints: {},
+            accounts: {},
             busy: false
         };
 
@@ -1342,6 +1343,11 @@
             if (code === 'TIMEOUT') return '连接超时，请确认 BitBrowser 已启动。';
             if (code === 'INVALID_URL') return 'API 地址格式不正确。';
             if (code === 'API_ERROR' || code === 'HTTP_ERROR') return '无法连接，请检查 API 端口。';
+            if (code === 'NOT_LOGGED_IN') return '请先在对应 BitBrowser 窗口中登录 Pinterest。';
+            if (code === 'ACCOUNT_MISMATCH') return '当前窗口登录了其他账号，已阻止覆盖原绑定。';
+            if (code === 'PAGE_STRUCTURE') return '无法识别 Pinterest 页面，请人工检查后重试。';
+            if (code === 'CDP_DISCONNECTED') return '窗口连接已断开，请重新打开窗口后重试。';
+            if (code === 'INVALID_BOARD_QUERY') return '请先选择具体的 Board 后再校验。';
             return error?.message || '请启动 BitBrowser 后重试。';
         }
 
@@ -1355,27 +1361,31 @@
 
         function phase1WindowRows() {
             if (!phase1State.windows.length) {
-                return '<tr><td colspan="4" class="emptyhint">还没有读取到窗口，请确认 BitBrowser 已启动。</td></tr>';
+                return '<tr><td colspan="5" class="emptyhint">还没有读取到窗口，请确认 BitBrowser 已启动。</td></tr>';
             }
             return phase1State.windows.map((item) => {
                 const state = item.is_open ? '已打开' : '已关闭';
+                const account = phase1State.accounts[item.window_id];
+                const accountCell = account
+                    ? `<b>${phase1Escape(account.pinterest_username)}</b><small>${account.boards ? `${account.boards.length} 个 Board` : '已识别，待检查 Board'}</small>`
+                    : '<span class="emptyhint">尚未识别</span>';
                 const action = item.is_open
-                    ? `<button class="btn small" onclick="phase1CloseWindow(__WINDOW_ID__)">关闭</button>`
+                    ? `<button class="btn small" onclick="phase1IdentifyAccount(__WINDOW_ID__)">识别账号</button>${account ? `<button class="btn small" onclick="phase1SyncBoards(__WINDOW_ID__)">检查 Board</button>` : ''}<button class="btn small" onclick="phase1CloseWindow(__WINDOW_ID__)">关闭</button>`
                     : `<button class="btn small primary" onclick="phase1OpenWindow(__WINDOW_ID__)">打开</button>`;
-                return `<tr><td><b>${phase1Escape(item.window_name || '未命名窗口')}</b><small>${phase1Escape(item.remark || '—')}</small></td><td><code>${phase1Escape(item.window_id)}</code></td><td><span class="status ${item.is_open ? 'green' : 'gray'}">${state}</span></td><td>${action.replace('__WINDOW_ID__', phase1Quote(item.window_id))}</td></tr>`;
+                return `<tr><td><b>${phase1Escape(item.window_name || '未命名窗口')}</b><small>${phase1Escape(item.remark || '—')}</small></td><td><code>${phase1Escape(item.window_id)}</code></td><td><span class="status ${item.is_open ? 'green' : 'gray'}">${state}</span></td><td>${accountCell}</td><td>${action.replaceAll('__WINDOW_ID__', phase1Quote(item.window_id))}</td></tr>`;
             }).join('');
         }
 
         function accountsV1() {
             const status = phase1StatusLabel();
-            return `${head('阶段 1 · BitBrowser', '账号管理', '先连接本机 BitBrowser，再查看可用窗口。当前阶段不访问 Pinterest，也不读取密码或 Cookie。', `<button class="btn primary" onclick="phase1ReadWindows()">↻ 读取窗口列表</button>`)}
+            return `${head('阶段 2 · 账号与 Board', '账号管理', '选择已打开的 BitBrowser 窗口，识别 Pinterest 账号并检查该账号的 Board。', `<button class="btn primary" onclick="phase1ReadWindows()">↻ 读取窗口列表</button>`)}
                 <div class="card" style="padding:20px;margin-bottom:16px">
                     <div class="card-head" style="padding:0 0 14px"><div><h3>BitBrowser 连接</h3><p>只调用本机 API，连接信息不会写入任务数据。</p></div><span class="status ${phase1StatusClass()}">${status}</span></div>
                     <div style="display:flex;gap:9px;align-items:center;flex-wrap:wrap"><label for="bitbrowserBaseUrl" style="font-size:12px;color:var(--muted)">API 地址</label><input id="bitbrowserBaseUrl" class="search" style="width:260px" value="${phase1Escape(phase1State.baseUrl)}" onchange="phase1State.baseUrl=this.value.trim()"><button class="btn small" onclick="phase1AutoDetect()">自动检测</button><button class="btn small primary" onclick="phase1ReadWindows()">读取窗口列表</button></div>
                     ${phase1State.error ? `<div style="margin-top:12px;padding:11px 13px;background:var(--rose);color:#9b4e40;border-radius:9px;font-size:11px">${phase1Escape(phase1State.error)}</div>` : ''}
                 </div>
-                <div class="card table-card"><div class="toolbar"><div><b>窗口列表</b><span class="emptyhint" style="margin-left:10px">${phase1State.windows.length} 个窗口</span></div><span class="emptyhint">窗口打开后只保留本次连接地址</span></div><div class="table-scroll"><table><thead><tr><th>窗口名称</th><th>窗口 ID</th><th>当前状态</th><th>操作</th></tr></thead><tbody>${phase1WindowRows()}</tbody></table></div></div>
-                <div style="margin-top:15px;padding:14px 17px;background:#fff7dc;border:1px solid #f0e2af;border-radius:11px;color:#80621f;font-size:11px;line-height:1.6">本阶段只负责发现、打开和关闭 BitBrowser 窗口。不会连接 Pinterest，不会上传视频，也不会创建任务队列。</div>`;
+                <div class="card table-card"><div class="toolbar"><div><b>窗口列表</b><span class="emptyhint" style="margin-left:10px">${phase1State.windows.length} 个窗口</span></div><span class="emptyhint">账号和 Board 按窗口分别保存</span></div><div class="table-scroll"><table><thead><tr><th>窗口名称</th><th>窗口 ID</th><th>当前状态</th><th>Pinterest 账号</th><th>操作</th></tr></thead><tbody>${phase1WindowRows()}</tbody></table></div></div>
+                <div style="margin-top:15px;padding:14px 17px;background:#fff7dc;border:1px solid #f0e2af;border-radius:11px;color:#80621f;font-size:11px;line-height:1.6">本阶段只读取当前登录账号和已有 Board，不会读取密码或 Cookie，不会创建 Board，不会导入素材、上传视频或发布。</div>`;
         }
 
         async function phase1ReadWindows() {
@@ -1389,6 +1399,10 @@
                 phase1State.status = 'API 已连接';
                 const result = await window.autoAPI.bitBrowser.listWindows({ baseUrl: phase1State.baseUrl });
                 phase1State.windows = result.windows;
+                await Promise.all(phase1State.windows.map(async (item) => {
+                    const snapshot = await window.autoAPI.accounts.getSnapshot(item.window_id);
+                    if (snapshot) phase1State.accounts[item.window_id] = { ...snapshot.account, boards: snapshot.boards };
+                }));
                 phase1State.status = '窗口列表已读取';
                 toast(`已读取 ${phase1State.windows.length} 个 BitBrowser 窗口`);
             } catch (error) {
@@ -1443,8 +1457,66 @@
             }
         }
 
+        async function phase1IdentifyAccount(windowId) {
+            if (!phase1CanUse() || phase1State.busy) return;
+            if (!phase1State.cdpEndpoints[windowId]) { toast('请先打开该 BitBrowser 窗口'); return; }
+            phase1State.busy = true;
+            phase1State.error = '';
+            try {
+                const item = phase1State.windows.find((windowItem) => windowItem.window_id === windowId);
+                const result = await window.autoAPI.accounts.identify({ windowId, windowName: item?.window_name ?? '' });
+                phase1State.accounts[windowId] = { ...result.account };
+                toast(`已识别 Pinterest 账号：${result.account.pinterest_username}，请继续检查 Board`);
+            } catch (error) {
+                phase1State.error = phase1Message(error);
+                toast(phase1State.error);
+            } finally {
+                phase1State.busy = false;
+                render();
+            }
+        }
+
+        async function phase1SyncBoards(windowId) {
+            if (!phase1CanUse() || phase1State.busy) return;
+            if (!phase1State.cdpEndpoints[windowId]) { toast('请先打开该 BitBrowser 窗口'); return; }
+            phase1State.busy = true;
+            phase1State.error = '';
+            try {
+                const item = phase1State.windows.find((windowItem) => windowItem.window_id === windowId);
+                const result = await window.autoAPI.accounts.syncBoards({ windowId, windowName: item?.window_name ?? '' });
+                phase1State.accounts[windowId] = { ...result.account, boards: result.boards };
+                toast(`已保存 ${result.boards.length} 个 Board 快照`);
+            } catch (error) {
+                phase1State.error = phase1Message(error);
+                toast(phase1State.error);
+            } finally {
+                phase1State.busy = false;
+                render();
+            }
+        }
+
         // Keep the existing demo structure but replace the phase-1 account page and connection action.
         connectBitBrowser = phase1ReadWindows;
+        function phase2Home() {
+            return `${head('阶段 2 · 账号与 Board', '账号管理', '先读取 BitBrowser 窗口，再识别 Pinterest 账号并检查 Board。', `<button class="btn primary" onclick="go('accounts')">打开账号管理 →</button>`)}<div class="card" style="padding:24px"><div class="card-head" style="padding:0 0 14px"><div><h3>阶段 2 已启用</h3><p>当前只处理账号绑定、Board 快照和 Board 校验。</p></div><span class="status green">范围已锁定</span></div><div class="grid two-col"><div class="detail-box"><small>已包含</small><b>BitBrowser 窗口、Pinterest 账号、Board 快照</b></div><div class="detail-box"><small>暂不包含</small><b>素材导入、任务队列、视频上传和 Publish</b></div></div></div>`;
+        }
+        home = phase2Home;
+        const phase2BlockedPages = new Set(['import', 'queue', 'issues', 'history', 'review']);
+        const originalGoForPhase2 = go;
+        const phase2BlockedMessage = () => toast('阶段 2 暂不开放素材、任务队列和发布功能');
+        openImport = phase2BlockedMessage;
+        simulateImport = phase2BlockedMessage;
+        startBatch = phase2BlockedMessage;
+        go = (nextPage) => {
+            if (phase2BlockedPages.has(nextPage)) {
+                phase2BlockedMessage();
+                return;
+            }
+            originalGoForPhase2(nextPage);
+        };
+        document.querySelectorAll('.nav button').forEach((button) => {
+            if (phase2BlockedPages.has(button.dataset.page)) button.style.display = 'none';
+        });
         render();
     </script>
 </body>
