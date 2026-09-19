@@ -19,5 +19,8 @@ contextBridge.exposeInMainWorld('autoAPI', {
     updateItem: (input) => ipcRenderer.invoke('import:update-item', input),
     confirmBatch: (batchId) => ipcRenderer.invoke('import:confirm-batch', batchId),
     listBatches: () => ipcRenderer.invoke('import:list-batches')
+  },
+  dryRun: {
+    start: (input) => ipcRenderer.invoke('dry-run:start', input)
   }
 });

@@ -60,6 +60,30 @@ function initDatabase(filename) {
       duplicate INTEGER NOT NULL DEFAULT 0,
       validation_error TEXT NOT NULL DEFAULT '',
       FOREIGN KEY (batch_id) REFERENCES import_batches(batch_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS dry_run_attempts (
+      attempt_id TEXT PRIMARY KEY,
+      item_id TEXT NOT NULL,
+      bit_window_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      current_step TEXT NOT NULL,
+      page_url TEXT,
+      last_screenshot_path TEXT,
+      error_code TEXT,
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS dry_run_steps (
+      attempt_id TEXT NOT NULL,
+      step_index INTEGER NOT NULL,
+      step TEXT NOT NULL,
+      page_url TEXT,
+      screenshot_path TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (attempt_id, step_index),
+      FOREIGN KEY (attempt_id) REFERENCES dry_run_attempts(attempt_id) ON DELETE CASCADE
     )
   `);
   db.pragma('foreign_keys = ON');
@@ -289,4 +313,39 @@ function getImportBatches(db) {
   return batches.map((batch) => ({ ...batch, items: itemQuery.all(batch.batch_id) }));
 }
 
-module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches };
+function getConfirmedImportItem(db, itemId) {
+  return db.prepare("SELECT i.*, b.status AS batch_status FROM import_items i JOIN import_batches b ON b.batch_id = i.batch_id WHERE i.item_id = ? AND b.status = 'confirmed'").get(itemId) ?? null;
+}
+
+function getAccountById(db, accountId) {
+  return db.prepare('SELECT * FROM accounts WHERE account_id = ?').get(accountId) ?? null;
+}
+
+function createDryRunAttempt(db, { itemId, bitWindowId, accountId }) {
+  const crypto = require('node:crypto');
+  const now = new Date().toISOString();
+  return db.transaction(() => {
+    db.prepare("UPDATE dry_run_attempts SET status = 'timed_out', current_step = 'timed_out', updated_at = ? WHERE status NOT IN ('ready_before_publish', 'failed', 'timed_out') AND julianday(updated_at) < julianday('now', '-30 minutes')").run(now);
+    const active = db.prepare("SELECT attempt_id FROM dry_run_attempts WHERE status NOT IN ('ready_before_publish', 'failed', 'timed_out') AND (item_id = ? OR bit_window_id = ?) LIMIT 1").get(itemId, bitWindowId);
+    if (active) throw new Error('该任务或窗口已有正在进行的预演。');
+    const attemptId = crypto.randomBytes(12).toString('hex');
+    db.prepare('INSERT INTO dry_run_attempts (attempt_id, item_id, bit_window_id, account_id, status, current_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(attemptId, itemId, bitWindowId, accountId, 'started', 'started', now, now);
+    return { attempt_id: attemptId, item_id: itemId, status: 'started', current_step: 'started' };
+  })();
+}
+
+function updateDryRunStep(db, attemptId, step, pageUrl, screenshotPath) {
+  db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, last_screenshot_path = ?, updated_at = ? WHERE attempt_id = ?').run(step, step, pageUrl ?? null, screenshotPath ?? null, new Date().toISOString(), attemptId);
+  const next = db.prepare('SELECT COALESCE(MAX(step_index), -1) + 1 AS value FROM dry_run_steps WHERE attempt_id = ?').get(attemptId).value;
+  db.prepare('INSERT INTO dry_run_steps (attempt_id, step_index, step, page_url, screenshot_path, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(attemptId, next, step, pageUrl ?? null, screenshotPath ?? null, new Date().toISOString());
+}
+
+function finishDryRunAttempt(db, attemptId, { status, pageUrl }) {
+  db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, updated_at = ? WHERE attempt_id = ?').run(status, status, pageUrl ?? null, new Date().toISOString(), attemptId);
+}
+
+function failDryRunAttempt(db, attemptId, { code, message, pageUrl, screenshotPath }) {
+  db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, last_screenshot_path = ?, error_code = ?, error_message = ?, updated_at = ? WHERE attempt_id = ?').run('failed', 'failed', pageUrl ?? null, screenshotPath ?? null, code, message, new Date().toISOString(), attemptId);
+}
+
+module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getAccountById, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };

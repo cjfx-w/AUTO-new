@@ -4,12 +4,14 @@ const path = require('node:path');
 const { BitBrowserClient } = require('../src/bitbrowser/client');
 const { PinterestAccountBoardService } = require('../src/pinterest/account-board');
 const { buildImportPreview } = require('../src/import/batch-preview');
+const { SingleTaskDryRunService } = require('../src/dry-run/single-task');
 const storage = require('../src/storage/database');
 
 let mainWindow;
 let bitBrowserClient;
 let database;
 let accountBoardService;
+let dryRunService;
 const activeCdpEndpoints = new Map();
 
 function createWindow() {
@@ -106,6 +108,11 @@ function registerIpc() {
     assertTrustedSender(event);
     return storage.getImportBatches(database);
   });
+  ipcMain.handle('dry-run:start', async (event, input) => {
+    assertTrustedSender(event);
+    if (!input || typeof input !== 'object' || typeof input.itemId !== 'string' || typeof input.windowId !== 'string') throw new Error('预演参数不正确。');
+    return dryRunService.run({ itemId: input.itemId, bitWindowId: input.windowId, cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
+  });
 }
 
 function validateAccountWindowInput(input) {
@@ -130,6 +137,18 @@ app.whenReady().then(() => {
       validateBoard: (input) => storage.validateBoard(database, input)
     },
     screenshotDir
+  });
+  dryRunService = new SingleTaskDryRunService({
+    storage: {
+      getConfirmedImportItem: (itemId) => storage.getConfirmedImportItem(database, itemId),
+      getAccountById: (accountId) => storage.getAccountById(database, accountId),
+      validateBoard: (input) => storage.validateBoard(database, input),
+      createDryRunAttempt: (input) => storage.createDryRunAttempt(database, input),
+      updateDryRunStep: (attemptId, step, pageUrl, screenshotPath) => storage.updateDryRunStep(database, attemptId, step, pageUrl, screenshotPath),
+      finishDryRunAttempt: (attemptId, input) => storage.finishDryRunAttempt(database, attemptId, input),
+      failDryRunAttempt: (attemptId, input) => storage.failDryRunAttempt(database, attemptId, input)
+    },
+    screenshotDir: path.join(userDataPath, 'diagnostics', 'phase-04')
   });
   registerIpc();
   createWindow();
