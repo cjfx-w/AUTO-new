@@ -63,6 +63,7 @@ function initDatabase(filename) {
     );
     CREATE TABLE IF NOT EXISTS dry_run_attempts (
       attempt_id TEXT PRIMARY KEY,
+      task_id TEXT,
       item_id TEXT NOT NULL,
       bit_window_id TEXT NOT NULL,
       account_id TEXT NOT NULL,
@@ -145,6 +146,8 @@ function initDatabase(filename) {
       PRIMARY KEY (platform, account_id, asset_hash)
     )
   `);
+  const columns = db.prepare('PRAGMA table_info(dry_run_attempts)').all().map((column) => column.name);
+  if (!columns.includes('task_id')) db.exec('ALTER TABLE dry_run_attempts ADD COLUMN task_id TEXT');
   db.pragma('foreign_keys = ON');
   return db;
 }
@@ -247,10 +250,14 @@ function updateImportItemBoard(db, itemId, boardId, boardName) {
   db.prepare('UPDATE import_items SET board_id = ?, board = ?, validation_error = ? WHERE item_id = ?').run(boardId, boardName, remainingErrors, itemId);
 }
 
-function saveCreatedBoardAndUpdateItem(db, { accountId, boardId, boardName, boardUrl, itemId }) {
+function updateProductTaskBoard(db, taskId, boardId, boardName) {
+  db.prepare('UPDATE product_tasks SET board_id = ?, board_name = ?, board_url = (SELECT board_url FROM boards WHERE board_id = ? AND account_id = product_tasks.account_id) WHERE task_id = ?').run(boardId, boardName, boardId, taskId);
+}
+
+function saveCreatedBoardAndUpdateItem(db, { accountId, boardId, boardName, boardUrl, itemId, taskId }) {
   const save = db.transaction(() => {
     saveCreatedBoard(db, { accountId, boardId, boardName, boardUrl });
-    updateImportItemBoard(db, itemId, boardId, boardName);
+    if (taskId) updateProductTaskBoard(db, taskId, boardId, boardName); else updateImportItemBoard(db, itemId, boardId, boardName);
   });
   save();
 }
@@ -398,6 +405,11 @@ function getConfirmedImportItem(db, itemId) {
   return db.prepare("SELECT i.*, b.status AS batch_status FROM import_items i JOIN import_batches b ON b.batch_id = i.batch_id WHERE i.item_id = ? AND b.status = 'confirmed'").get(itemId) ?? null;
 }
 
+function getDryRunTask(db, { taskId, itemId }) {
+  if (taskId) return db.prepare("SELECT t.task_id, t.product_id, t.product_name, t.asset_id, a.asset_hash, a.file_path, t.title, t.description, t.product_url, t.account_id, t.bit_window_id, t.board_name AS board, t.board_id, t.board_url, t.status FROM product_tasks t JOIN product_assets a ON a.asset_id = t.asset_id WHERE t.task_id = ? AND t.status = 'ready'").get(taskId) ?? null;
+  return getConfirmedImportItem(db, itemId);
+}
+
 function getAccountById(db, accountId) {
   return db.prepare('SELECT * FROM accounts WHERE account_id = ?').get(accountId) ?? null;
 }
@@ -452,22 +464,26 @@ function saveProductRun(db, preview) {
   return save();
 }
 
+function listProductTasks(db, productId) {
+  return db.prepare('SELECT * FROM product_tasks WHERE product_id = ? ORDER BY created_at, task_id').all(productId);
+}
+
 function releasePublicationLock(db, { accountId, assetHash, productId }) {
   const owned = db.prepare("SELECT 1 FROM product_tasks WHERE product_id = ? AND account_id = ? AND asset_hash = ? AND status = 'ready' LIMIT 1").get(productId, accountId, assetHash);
   if (!owned) return false;
   return db.prepare("DELETE FROM publication_locks WHERE platform = 'pinterest' AND account_id = ? AND asset_hash = ? AND owner_product_id = ? AND state = 'reserved'").run(accountId, assetHash, productId).changes === 1;
 }
 
-function createDryRunAttempt(db, { itemId, bitWindowId, accountId }) {
+function createDryRunAttempt(db, { itemId, taskId, bitWindowId, accountId }) {
   const crypto = require('node:crypto');
   const now = new Date().toISOString();
   return db.transaction(() => {
     db.prepare("UPDATE dry_run_attempts SET status = 'timed_out', current_step = 'timed_out', updated_at = ? WHERE status NOT IN ('ready_before_publish', 'failed', 'timed_out') AND julianday(updated_at) < julianday('now', '-30 minutes')").run(now);
-    const active = db.prepare("SELECT attempt_id FROM dry_run_attempts WHERE status NOT IN ('ready_before_publish', 'failed', 'timed_out') AND (item_id = ? OR bit_window_id = ?) LIMIT 1").get(itemId, bitWindowId);
+    const active = db.prepare("SELECT attempt_id FROM dry_run_attempts WHERE status NOT IN ('ready_before_publish', 'failed', 'timed_out') AND ((task_id IS NOT NULL AND task_id = ?) OR (task_id IS NULL AND item_id = ?) OR bit_window_id = ?) LIMIT 1").get(taskId ?? null, itemId ?? null, bitWindowId);
     if (active) throw new Error('该任务或窗口已有正在进行的预演。');
     const attemptId = crypto.randomBytes(12).toString('hex');
-    db.prepare('INSERT INTO dry_run_attempts (attempt_id, item_id, bit_window_id, account_id, status, current_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(attemptId, itemId, bitWindowId, accountId, 'started', 'started', now, now);
-    return { attempt_id: attemptId, item_id: itemId, status: 'started', current_step: 'started' };
+    db.prepare('INSERT INTO dry_run_attempts (attempt_id, task_id, item_id, bit_window_id, account_id, status, current_step, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)').run(attemptId, taskId ?? null, itemId ?? null, bitWindowId, accountId, 'started', 'started', now, now);
+    return { attempt_id: attemptId, task_id: taskId ?? null, item_id: itemId ?? null, status: 'started', current_step: 'started' };
   })();
 }
 
@@ -485,4 +501,4 @@ function failDryRunAttempt(db, attemptId, { code, message, pageUrl, screenshotPa
   db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, last_screenshot_path = ?, error_code = ?, error_message = ?, updated_at = ? WHERE attempt_id = ?').run('failed', 'failed', pageUrl ?? null, screenshotPath ?? null, code, message, new Date().toISOString(), attemptId);
 }
 
-module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getAccountById, getProductAssetHashes, getProductAssetHashCache, saveProductRun, releasePublicationLock, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };
+module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, updateProductTaskBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getDryRunTask, getAccountById, getProductAssetHashes, getProductAssetHashCache, saveProductRun, listProductTasks, releasePublicationLock, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };

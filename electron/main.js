@@ -112,8 +112,8 @@ function registerIpc() {
   });
   ipcMain.handle('dry-run:start', async (event, input) => {
     assertTrustedSender(event);
-    if (!input || typeof input !== 'object' || typeof input.itemId !== 'string' || typeof input.windowId !== 'string') throw new Error('预演参数不正确。');
-    return dryRunService.run({ itemId: input.itemId, bitWindowId: input.windowId, allowCreateBoard: Boolean(input.allowCreateBoard), cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
+    if (!input || typeof input !== 'object' || (typeof input.itemId !== 'string' && typeof input.taskId !== 'string') || typeof input.windowId !== 'string') throw new Error('预演参数不正确。');
+    return dryRunService.run({ itemId: input.itemId, taskId: input.taskId, bitWindowId: input.windowId, allowCreateBoard: Boolean(input.allowCreateBoard), cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
   });
   ipcMain.handle('product:accounts', async (event) => {
     assertTrustedSender(event);
@@ -173,12 +173,18 @@ function registerIpc() {
     const boardsByAccount = new Map(accounts.map((account) => [account.account_id, storage.getBoards(database, account.account_id)]));
     const preview = buildProductPreview({ ...input, assets: await assets, accounts, boardsByAccount, existingHashes: storage.getProductAssetHashes(database, input.selectedAccountIds) });
     if (preview.errors.length) throw new Error(preview.errors.join(' '));
-    return storage.saveProductRun(database, preview);
+    const saved = storage.saveProductRun(database, preview);
+    return { ...saved, tasks: saved.product_id ? storage.listProductTasks(database, saved.product_id) : [] };
   });
   ipcMain.handle('product:release-lock', (event, input) => {
     assertTrustedSender(event);
     if (!input || typeof input.accountId !== 'string' || typeof input.assetHash !== 'string' || typeof input.productId !== 'string' || input.reason !== 'pre_publish_failed') throw new Error('锁参数不正确。');
     return { released: storage.releasePublicationLock(database, input) };
+  });
+  ipcMain.handle('product:list-tasks', (event, productId) => {
+    assertTrustedSender(event);
+    if (typeof productId !== 'string' || !productId.trim()) throw new Error('产品参数不正确。');
+    return storage.listProductTasks(database, productId);
   });
 }
 
@@ -208,11 +214,14 @@ app.whenReady().then(() => {
   dryRunService = new SingleTaskDryRunService({
     storage: {
       getConfirmedImportItem: (itemId) => storage.getConfirmedImportItem(database, itemId),
+      getDryRunTask: (input) => storage.getDryRunTask(database, input),
       getAccountById: (accountId) => storage.getAccountById(database, accountId),
       validateBoard: (input) => storage.validateBoard(database, input),
       saveCreatedBoard: (input) => storage.saveCreatedBoard(database, input),
       saveCreatedBoardAndUpdateItem: (input) => storage.saveCreatedBoardAndUpdateItem(database, input),
       updateImportItemBoard: (itemId, boardId, boardName) => storage.updateImportItemBoard(database, itemId, boardId, boardName),
+      updateProductTaskBoard: (taskId, boardId, boardName) => storage.updateProductTaskBoard(database, taskId, boardId, boardName),
+      releasePublicationLock: (input) => storage.releasePublicationLock(database, input),
       createDryRunAttempt: (input) => storage.createDryRunAttempt(database, input),
       updateDryRunStep: (attemptId, step, pageUrl, screenshotPath) => storage.updateDryRunStep(database, attemptId, step, pageUrl, screenshotPath),
       finishDryRunAttempt: (attemptId, input) => storage.finishDryRunAttempt(database, attemptId, input),

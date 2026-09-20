@@ -54,19 +54,24 @@ class SingleTaskDryRunService {
     throw new PinterestValidationError('PAGE_CONTROL_NOT_FOUND', `无法确认${step}控件。`);
   }
 
-  async run({ itemId, bitWindowId, cdpEndpoint, allowCreateBoard = false } = {}) {
-    if (!itemId || !bitWindowId || !cdpEndpoint) throw new PinterestValidationError('INVALID_INPUT', '缺少预演任务、窗口或 CDP 信息。');
-    const item = this.storage.getConfirmedImportItem(itemId);
+  async run({ itemId, taskId, bitWindowId, cdpEndpoint, allowCreateBoard = false } = {}) {
+    if ((!itemId && !taskId) || !bitWindowId || !cdpEndpoint) throw new PinterestValidationError('INVALID_INPUT', '缺少预演任务、窗口或 CDP 信息。');
+    const item = this.storage.getDryRunTask ? this.storage.getDryRunTask({ taskId, itemId }) : this.storage.getConfirmedImportItem(itemId);
     if (!item) throw new PinterestValidationError('TASK_NOT_CONFIRMED', '只能预演已确认的单视频任务。');
     const account = this.storage.getAccountById(item.account_id);
     if (!account || account.bit_window_id !== bitWindowId) throw new PinterestValidationError('ACCOUNT_MISMATCH', '任务账号与当前 BitBrowser 窗口不一致。');
     let boardCheck = this.storage.validateBoard({ accountId: item.account_id, boardId: item.board_id, boardName: item.board, boardUrl: null });
     if (!boardCheck.valid) boardCheck = this.storage.validateBoard({ accountId: item.account_id, boardId: null, boardName: item.board, boardUrl: null });
     if (!boardCheck.valid && !allowCreateBoard) throw new PinterestValidationError('BOARD_CREATION_CONFIRM_REQUIRED', `当前账号不存在 Board“${item.board}”，是否创建？`);
-    if (boardCheck.valid && boardCheck.board?.board_id && item.board_id !== boardCheck.board.board_id) this.storage.updateImportItemBoard?.(item.item_id, boardCheck.board.board_id, boardCheck.board.board_name);
+    if (boardCheck.valid && boardCheck.board?.board_id && item.board_id !== boardCheck.board.board_id) {
+      if (item.task_id) this.storage.updateProductTaskBoard?.(item.task_id, boardCheck.board.board_id, boardCheck.board.board_name);
+      else this.storage.updateImportItemBoard?.(item.item_id, boardCheck.board.board_id, boardCheck.board.board_name);
+    }
     if (!item.file_path || !fs.existsSync(item.file_path) || !fs.statSync(item.file_path).isFile()) throw new PinterestValidationError('ASSET_MISSING', '视频素材不存在。');
 
-    const attempt = this.storage.createDryRunAttempt({ itemId, bitWindowId, accountId: item.account_id });
+    const effectiveTaskId = item.task_id ?? taskId ?? item.item_id;
+    if (!effectiveTaskId) throw new PinterestValidationError('INVALID_INPUT', '预演任务缺少唯一任务 ID。');
+    const attempt = this.storage.createDryRunAttempt({ itemId: item.item_id ?? effectiveTaskId, taskId: item.task_id ?? taskId ?? null, bitWindowId, accountId: item.account_id });
     let browser;
     let page;
     let lastError;
@@ -141,6 +146,7 @@ class SingleTaskDryRunService {
         const screenshotPath = page ? await this.screenshot(page, attempt.attempt_id, attempt.current_step || 'failed') : null;
         if (page) this.storage.updateDryRunStep(attempt.attempt_id, attempt.current_step || 'failed', page.url(), screenshotPath);
         this.storage.failDryRunAttempt(attempt.attempt_id, { code: normalized.code, message: normalized.message, pageUrl: page?.url?.() ?? null, screenshotPath });
+        if (item.product_id && item.asset_hash) this.storage.releasePublicationLock?.({ productId: item.product_id, accountId: item.account_id, assetHash: item.asset_hash, reason: 'pre_publish_failed' });
         throw normalized;
       } finally {
         if (page && !keepPageOpen) await page.close().catch(() => {});
@@ -176,7 +182,7 @@ class SingleTaskDryRunService {
       if (parts.length === 2 && parts[0].toLowerCase() === account.pinterest_username.toLowerCase()) {
         const boardUrl = `https://www.pinterest.com/${parts[0]}/${parts[1]}/`;
         const boardId = stableId(parts[1]);
-        (this.storage.saveCreatedBoardAndUpdateItem ?? ((input) => { this.storage.saveCreatedBoard(input); this.storage.updateImportItemBoard?.(input.itemId, input.boardId, input.boardName); }))({ accountId: item.account_id, boardId, boardName: item.board, boardUrl, itemId: item.item_id });
+        (this.storage.saveCreatedBoardAndUpdateItem ?? ((input) => { this.storage.saveCreatedBoard(input); if (input.taskId) this.storage.updateProductTaskBoard?.(input.taskId, input.boardId, input.boardName); else this.storage.updateImportItemBoard?.(input.itemId, input.boardId, input.boardName); }))({ accountId: item.account_id, boardId, boardName: item.board, boardUrl, itemId: item.item_id, taskId: item.task_id });
         return { valid: true, board: { account_id: item.account_id, board_id: boardId, board_name: item.board, board_url: boardUrl } };
       }
     }
@@ -212,7 +218,7 @@ class SingleTaskDryRunService {
     const boardPath = new URL(boardUrl).pathname.split('/').filter(Boolean);
     if (boardPath.length !== 2 || boardPath[0].toLowerCase() !== identity.pinterest_username.toLowerCase()) throw new PinterestValidationError('BOARD_CREATE_FAILED', '重新读取到的 Board 不属于当前账号。');
     const boardId = stableId(boardPath[1]);
-    (this.storage.saveCreatedBoardAndUpdateItem ?? ((input) => { this.storage.saveCreatedBoard(input); this.storage.updateImportItemBoard?.(input.itemId, input.boardId, input.boardName); }))({ accountId: item.account_id, boardId, boardName: item.board, boardUrl, itemId: item.item_id });
+    (this.storage.saveCreatedBoardAndUpdateItem ?? ((input) => { this.storage.saveCreatedBoard(input); if (input.taskId) this.storage.updateProductTaskBoard?.(input.taskId, input.boardId, input.boardName); else this.storage.updateImportItemBoard?.(input.itemId, input.boardId, input.boardName); }))({ accountId: item.account_id, boardId, boardName: item.board, boardUrl, itemId: item.item_id, taskId: item.task_id });
     await page.goto(PIN_BUILDER, { waitUntil: 'domcontentloaded', timeout: 15000 });
     return { valid: true, board: { account_id: item.account_id, board_id: boardId, board_name: item.board, board_url: boardUrl } };
   }

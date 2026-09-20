@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('autoAPI', {
     listAccounts: () => ipcRenderer.invoke('product:accounts'),
     scanPreview: (input) => ipcRenderer.invoke('product:scan-preview', input),
     confirm: (input) => ipcRenderer.invoke('product:confirm', input),
-    releaseLock: (input) => ipcRenderer.invoke('product:release-lock', input)
+    releaseLock: (input) => ipcRenderer.invoke('product:release-lock', input),
+    listTasks: (productId) => ipcRenderer.invoke('product:list-tasks', productId)
   }
 });
