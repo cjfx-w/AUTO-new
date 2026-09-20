@@ -1619,6 +1619,42 @@
         render();
         phase3LoadBatches().then(() => { if (page === 'home' || page === 'import') render(); });
     </script>
+    <script>
+        const productState = { productName: '', title: '', description: '', productUrl: '', boardName: '', folderPath: '', assets: [], accounts: [], selectedAccountIds: [], errors: [], scanned: false, busy: false, result: null };
+        function productEscape(value) { return phase1Escape(value); }
+        function productChooseFolder() { document.getElementById('folderInput')?.click(); }
+        async function productLoadAccounts() {
+            if (!window.autoAPI?.product) return;
+            try { productState.accounts = (await window.autoAPI.product.listAccounts()).filter((account) => account.account_id && account.verification_state !== 'unavailable'); productState.selectedAccountIds = productState.accounts.map((account) => account.account_id); if (productState.folderPath) await productScan(productState.folderPath); else render(); } catch (error) { productState.errors = [error.message || '读取账号失败']; render(); }
+        }
+        async function productScan(folderPath) {
+            if (!folderPath || productState.busy) return;
+            if (!productState.boardName) productState.boardName = productState.productName;
+            productState.busy = true; productState.folderPath = folderPath; productState.errors = [];
+            try {
+                const result = await window.autoAPI.product.scanPreview({ folderPath, productName: productState.productName, title: productState.title, description: productState.description, productUrl: productState.productUrl, boardName: productState.boardName, selectedAccountIds: productState.selectedAccountIds });
+                productState.assets = result.assets; productState.result = result; productState.scanned = true; productState.errors = result.errors || [];
+                toast(`已发现 ${result.assets.length} 个视频，预计 ${result.task_count} 个任务`);
+            } catch (error) { productState.errors = [error.message || '扫描产品文件夹失败']; }
+            finally { productState.busy = false; render(); }
+        }
+        phase3ImportFolder = productScan;
+        async function productConfirm() {
+            if (!productState.result || productState.errors.length) { toast('请先处理产品信息或扫描错误'); return; }
+            try { const result = await window.autoAPI.product.confirm({ ...productState, assets: productState.assets, accountSnapshots: productState.result?.selected_accounts ?? [] }); toast(`已生成 ${result.task_count} 个待发布任务`); productState.result = { ...productState.result, confirmed: true }; render(); } catch (error) { toast(error.message || '保存产品任务失败'); }
+        }
+        function productPage() {
+            const accountList = `${productState.accounts.length ? productState.accounts.map((account) => `<label style="display:flex;align-items:center;gap:8px;padding:8px 0"><input type="checkbox" ${productState.selectedAccountIds.includes(account.account_id) ? 'checked' : ''} onchange="productToggleAccount('${account.account_id}',this.checked)"><span>${productEscape(account.pinterest_username)} · ${productEscape(account.window_name)}</span></label>`).join('') : '<span class="emptyhint">请先在账号管理中识别 Pinterest 账号。</span>'}<button class="btn small" style="margin-top:8px" onclick="productLoadAccounts()">重新读取账号</button>`;
+            const summary = productState.scanned ? `<div class="detail"><div class="detail-box"><small>视频数量</small><b>${productState.assets.length}</b></div><div class="detail-box"><small>选中账号</small><b>${productState.selectedAccountIds.length}</b></div><div class="detail-box"><small>预计任务</small><b>${productState.result?.task_count ?? 0}</b></div></div><div style="margin-top:12px;font-size:11px;color:var(--muted)">${productState.assets.slice(0,8).map((asset) => productEscape(asset.relative_path)).join(' · ')}</div>` : '<span class="emptyhint">选择文件夹后自动扫描视频。</span>';
+            return `${head('阶段 3B · 产品文件夹', '新建产品', '填写一次产品信息，选择视频文件夹，系统自动生成视频 × 账号任务预览。', `<button class="btn primary" onclick="productConfirm()">确认并生成任务</button>`)}<div class="card" style="padding:22px"><div class="grid two-col"><div><label class="detail-box" style="display:block"><small>产品名称 *</small><input class="search" style="width:100%" value="${productEscape(productState.productName)}" oninput="productState.productName=this.value"></label><label class="detail-box" style="display:block;margin-top:10px"><small>Pin 标题 *</small><input class="search" style="width:100%" value="${productEscape(productState.title)}" oninput="productState.title=this.value"></label><label class="detail-box" style="display:block;margin-top:10px"><small>Pin 描述 *</small><textarea class="search" style="width:100%;height:80px" oninput="productState.description=this.value">${productEscape(productState.description)}</textarea></label><label class="detail-box" style="display:block;margin-top:10px"><small>产品链接（可选）</small><input class="search" style="width:100%" value="${productEscape(productState.productUrl)}" oninput="productState.productUrl=this.value"></label><label class="detail-box" style="display:block;margin-top:10px"><small>Board 名称 *</small><input class="search" style="width:100%" value="${productEscape(productState.boardName || productState.productName)}" oninput="productState.boardName=this.value"></label></div><div><div class="detail-box"><small>视频文件夹 *</small><button class="btn small" onclick="productChooseFolder()">选择文件夹</button><p class="sub">${productEscape(productState.folderPath || '未选择')}</p><p class="emptyhint">支持任意视频文件名，默认递归扫描子文件夹。</p></div><div class="detail-box" style="margin-top:12px"><small>本次发布账号</small>${accountList}</div></div></div><div style="margin-top:18px"><div class="eyebrow">导入预览</div>${summary}</div>${productState.errors.length ? `<div style="margin-top:12px;padding:12px;background:var(--rose);color:#9b4e40;border-radius:9px;font-size:11px">${productState.errors.map(productEscape).join('<br>')}</div>` : ''}<div style="margin-top:14px;font-size:11px;color:var(--muted)">旧版 pins.xlsx 解析入口仍保留在后台兼容接口；本页面使用产品文件夹模式。</div></div>`;
+        }
+        function productToggleAccount(accountId, checked) { productState.selectedAccountIds = checked ? [...new Set([...productState.selectedAccountIds, accountId])] : productState.selectedAccountIds.filter((id) => id !== accountId); if (productState.folderPath) productScan(productState.folderPath); else render(); }
+        function productUpdateName(value) { productState.productName = value; if (!productState.boardName) productState.boardName = value; render(); }
+        importPageV1 = productPage;
+        const productBaseRender = render;
+        render = () => { productBaseRender(); };
+        productLoadAccounts();
+    </script>
 </body>
 
 </html>

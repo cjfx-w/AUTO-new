@@ -144,7 +144,7 @@ function normalizeRows(rows, videoFiles, accounts = [], boardsByAccount = new Ma
     const file = matchingFiles[0];
     const account = accounts.find((item) => accountMatches(item, normalized.account_group));
     const rowErrors = [];
-    if (!isValidHttpUrl(normalized.product_url)) rowErrors.push('产品链接格式不正确');
+    if (normalized.product_url && !isValidHttpUrl(normalized.product_url)) rowErrors.push('产品链接格式不正确');
     if (!normalized.title) rowErrors.push('标题不能为空');
     if (!normalized.description) rowErrors.push('描述不能为空');
     if (!account) rowErrors.push(`账号组无法匹配：${normalized.account_group || '未填写'}`);

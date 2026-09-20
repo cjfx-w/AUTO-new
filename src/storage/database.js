@@ -84,6 +84,65 @@ function initDatabase(filename) {
       created_at TEXT NOT NULL,
       PRIMARY KEY (attempt_id, step_index),
       FOREIGN KEY (attempt_id) REFERENCES dry_run_attempts(attempt_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS products (
+      product_id TEXT PRIMARY KEY,
+      run_key TEXT UNIQUE NOT NULL,
+      product_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      product_url TEXT NOT NULL DEFAULT '',
+      board_name TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS product_assets (
+      asset_id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      asset_hash TEXT NOT NULL,
+      file_name TEXT NOT NULL,
+      relative_path TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      modified_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(product_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS product_tasks (
+      task_id TEXT PRIMARY KEY,
+      product_id TEXT NOT NULL,
+      product_name TEXT NOT NULL DEFAULT '',
+      asset_id TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      bit_window_id TEXT NOT NULL,
+      board_name TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      product_url TEXT NOT NULL DEFAULT '',
+      account_username TEXT NOT NULL DEFAULT '',
+      window_name TEXT NOT NULL DEFAULT '',
+      pinterest_profile_url TEXT,
+      verification_state TEXT,
+      board_sync_state TEXT,
+      last_board_checked_at TEXT,
+      board_id TEXT,
+      board_url TEXT,
+      asset_hash TEXT NOT NULL DEFAULT '',
+      file_name TEXT NOT NULL DEFAULT '',
+      relative_path TEXT NOT NULL DEFAULT '',
+      content_version TEXT NOT NULL DEFAULT 'v1',
+      status TEXT NOT NULL DEFAULT 'ready',
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (product_id) REFERENCES products(product_id),
+      FOREIGN KEY (asset_id) REFERENCES product_assets(asset_id)
+    );
+    CREATE TABLE IF NOT EXISTS publication_locks (
+      platform TEXT NOT NULL,
+      account_id TEXT NOT NULL,
+      asset_hash TEXT NOT NULL,
+      state TEXT NOT NULL,
+      first_attempt_id TEXT,
+      owner_product_id TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (platform, account_id, asset_hash)
     )
   `);
   db.pragma('foreign_keys = ON');
@@ -293,7 +352,7 @@ function updateImportItem(db, { itemId, title, description, productUrl, board, b
   }
   const validationErrors = String(state.validation_error || '').split('；').filter((error) => error && !(['产品链接格式不正确'].includes(error) || error.startsWith('标题') || error.startsWith('描述') || error.startsWith('Board 无法匹配')));
   if (!state.file_path) validationErrors.push(state.validation_error || '素材文件无效');
-  try { const url = new URL(productUrl); if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) validationErrors.push('产品链接格式不正确'); } catch { validationErrors.push('产品链接格式不正确'); }
+  if (productUrl) { try { const url = new URL(productUrl); if (!['http:', 'https:'].includes(url.protocol) || !url.hostname) validationErrors.push('产品链接格式不正确'); } catch { validationErrors.push('产品链接格式不正确'); } }
   if (!title || !description) validationErrors.push('标题、描述不能为空');
   if (!boardId) validationErrors.push('Board 无法匹配');
   db.prepare('UPDATE import_items SET title = ?, description = ?, product_url = ?, board = ?, board_id = ?, validation_error = ? WHERE item_id = ?').run(title, description, productUrl, board, boardId ?? null, validationErrors.join('；'), itemId);
@@ -321,7 +380,7 @@ function confirmImportBatch(db, batchId) {
     return board && String(board.board_name).toLowerCase() === String(item.board).toLowerCase();
   });
   if (!boardMatches) return { confirmed: false, batch_id: batchId, status: 'invalid', reason: 'Board 必须属于当前账号，且名称与 Board ID 一致。' };
-  const validLinks = (value) => { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname); } catch { return false; } };
+  const validLinks = (value) => { if (!value) return true; try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname); } catch { return false; } };
   if (items.some((item) => item.duplicate || item.validation_error || !item.account_id || !item.board_id || !item.title || !item.description || !validLinks(item.product_url))) {
     return { confirmed: false, batch_id: batchId, status: 'invalid', reason: '请先处理重复素材、账号、Board 和内容字段。' };
   }
@@ -341,6 +400,62 @@ function getConfirmedImportItem(db, itemId) {
 
 function getAccountById(db, accountId) {
   return db.prepare('SELECT * FROM accounts WHERE account_id = ?').get(accountId) ?? null;
+}
+
+function getProductAssetHashes(db, accountIds) {
+  const result = new Set();
+  if (!accountIds.length) return result;
+  const placeholders = accountIds.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT account_id, asset_hash FROM publication_locks WHERE account_id IN (${placeholders})`).all(...accountIds);
+  for (const row of rows) result.add(`${row.account_id}:${row.asset_hash}`);
+  return result;
+}
+
+function getProductAssetHashCache(db) {
+  const cache = new Map();
+  for (const row of db.prepare('SELECT file_path, file_size, modified_at, asset_hash FROM product_assets').all()) {
+    const modified = Date.parse(row.modified_at);
+    if (Number.isFinite(modified)) cache.set(`${row.file_path}:${row.file_size}:${modified}`, row.asset_hash);
+  }
+  return cache;
+}
+
+function saveProductRun(db, preview) {
+  const crypto = require('node:crypto');
+  const now = new Date().toISOString();
+  const stableAccounts = preview.tasks.map((task) => JSON.stringify({ account_id: task.account_id, board_id: task.board_id, board_url: task.board_url, account_username: task.account_username })).sort();
+  const runKey = crypto.createHash('sha256').update(JSON.stringify({ productName: preview.productName, title: preview.title, description: preview.description, productUrl: preview.productUrl || '', boardName: preview.boardName, assets: preview.assets.map((asset) => asset.asset_hash).sort(), accounts: stableAccounts })).digest('hex');
+  const productId = crypto.randomBytes(12).toString('hex');
+  const save = db.transaction(() => {
+    const inserted = db.prepare('INSERT OR IGNORE INTO products (product_id, run_key, product_name, title, description, product_url, board_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(productId, runKey, preview.productName, preview.title, preview.description, preview.productUrl || '', preview.boardName, now);
+    if (!inserted.changes) { const existing = db.prepare('SELECT product_id FROM products WHERE run_key = ?').get(runKey); return { product_id: existing.product_id, task_count: db.prepare('SELECT COUNT(*) AS count FROM product_tasks WHERE product_id = ?').get(existing.product_id).count, idempotent: true }; }
+    const assetIds = new Map();
+    const assetInsert = db.prepare('INSERT INTO product_assets (asset_id, product_id, asset_hash, file_name, relative_path, file_path, file_size, modified_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    for (const asset of preview.assets) {
+      const assetId = crypto.randomBytes(12).toString('hex');
+      assetIds.set(asset.asset_id, assetId);
+      assetInsert.run(assetId, productId, asset.asset_hash, asset.file_name, asset.relative_path, asset.file_path, asset.file_size, asset.modified_at);
+    }
+    const lock = db.prepare('INSERT OR IGNORE INTO publication_locks (platform, account_id, asset_hash, state, owner_product_id, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+    const taskInsert = db.prepare('INSERT INTO product_tasks (task_id, product_id, product_name, asset_id, account_id, bit_window_id, board_name, title, description, product_url, account_username, window_name, pinterest_profile_url, verification_state, board_sync_state, last_board_checked_at, board_id, board_url, asset_hash, file_name, relative_path, content_version, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    let generated = 0;
+    for (const task of preview.tasks) {
+      const assetId = assetIds.get(task.asset.asset_id);
+      const lockResult = lock.run('pinterest', task.account_id, task.asset.asset_hash, 'reserved', productId, now);
+      if (!lockResult.changes) continue;
+      taskInsert.run(crypto.randomBytes(12).toString('hex'), productId, preview.productName, assetId, task.account_id, task.bit_window_id, task.board_name, task.title, task.description, task.product_url || '', task.account_username || '', task.window_name || '', task.pinterest_profile_url || null, task.verification_state || null, task.board_sync_state || null, task.last_board_checked_at || null, task.board_id, task.board_url, task.asset.asset_hash, task.asset.file_name, task.asset.relative_path, 'v1', now);
+      generated += 1;
+    }
+    if (!generated) { db.prepare('DELETE FROM products WHERE product_id = ?').run(productId); return { product_id: null, task_count: 0, duplicate: true }; }
+    return { product_id: productId, task_count: generated };
+  });
+  return save();
+}
+
+function releasePublicationLock(db, { accountId, assetHash, productId }) {
+  const owned = db.prepare("SELECT 1 FROM product_tasks WHERE product_id = ? AND account_id = ? AND asset_hash = ? AND status = 'ready' LIMIT 1").get(productId, accountId, assetHash);
+  if (!owned) return false;
+  return db.prepare("DELETE FROM publication_locks WHERE platform = 'pinterest' AND account_id = ? AND asset_hash = ? AND owner_product_id = ? AND state = 'reserved'").run(accountId, assetHash, productId).changes === 1;
 }
 
 function createDryRunAttempt(db, { itemId, bitWindowId, accountId }) {
@@ -370,4 +485,4 @@ function failDryRunAttempt(db, attemptId, { code, message, pageUrl, screenshotPa
   db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, last_screenshot_path = ?, error_code = ?, error_message = ?, updated_at = ? WHERE attempt_id = ?').run('failed', 'failed', pageUrl ?? null, screenshotPath ?? null, code, message, new Date().toISOString(), attemptId);
 }
 
-module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getAccountById, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };
+module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getAccountById, getProductAssetHashes, getProductAssetHashCache, saveProductRun, releasePublicationLock, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };

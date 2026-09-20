@@ -2,8 +2,10 @@ const { app, BrowserWindow, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { BitBrowserClient } = require('../src/bitbrowser/client');
+const { DEFAULT_BASE_URL } = require('../src/bitbrowser/client');
 const { PinterestAccountBoardService } = require('../src/pinterest/account-board');
 const { buildImportPreview } = require('../src/import/batch-preview');
+const { scanProductFolder, buildProductPreview } = require('../src/import/product-folder');
 const { SingleTaskDryRunService } = require('../src/dry-run/single-task');
 const storage = require('../src/storage/database');
 
@@ -112,6 +114,71 @@ function registerIpc() {
     assertTrustedSender(event);
     if (!input || typeof input !== 'object' || typeof input.itemId !== 'string' || typeof input.windowId !== 'string') throw new Error('预演参数不正确。');
     return dryRunService.run({ itemId: input.itemId, bitWindowId: input.windowId, allowCreateBoard: Boolean(input.allowCreateBoard), cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
+  });
+  ipcMain.handle('product:accounts', async (event) => {
+    assertTrustedSender(event);
+    const discovered = [];
+    const windows = await bitBrowserClient.listWindows({ baseUrl: DEFAULT_BASE_URL });
+    for (const item of windows.windows.filter((windowItem) => windowItem.is_open)) {
+      try {
+        let endpoint = activeCdpEndpoints.get(item.window_id);
+        if (!endpoint) { const opened = await bitBrowserClient.openWindow({ baseUrl: DEFAULT_BASE_URL, windowId: item.window_id }); endpoint = opened.cdp_endpoint; activeCdpEndpoints.set(item.window_id, endpoint); }
+        const result = await accountBoardService.syncBoards({ bitWindowId: item.window_id, windowName: item.window_name, cdpEndpoint: endpoint });
+        discovered.push(result.account);
+      } catch (error) { discovered.push({ bit_window_id: item.window_id, window_name: item.window_name, verification_state: 'unavailable', error: error.message }); }
+    }
+    return discovered;
+  });
+  ipcMain.handle('product:scan-preview', async (event, input) => {
+    assertTrustedSender(event);
+    if (!input || typeof input !== 'object' || typeof input.folderPath !== 'string') throw new Error('产品导入参数不正确。');
+    const assets = await scanProductFolder(input.folderPath, { hashCache: storage.getProductAssetHashCache(database) });
+    let currentAccounts = storage.listAccounts(database);
+    const selectedAccountIds = Array.isArray(input.selectedAccountIds) ? input.selectedAccountIds : currentAccounts.map((account) => account.account_id);
+    const accounts = currentAccounts.filter((account) => selectedAccountIds.includes(account.account_id));
+    const boardsByAccount = new Map(accounts.map((account) => [account.account_id, storage.getBoards(database, account.account_id)]));
+    const preview = buildProductPreview({ ...input, assets, accounts, boardsByAccount, selectedAccountIds, existingHashes: storage.getProductAssetHashes(database, selectedAccountIds) });
+    return { ...preview, duplicate_hashes: [...storage.getProductAssetHashes(database, selectedAccountIds)] };
+  });
+  ipcMain.handle('product:confirm', async (event, input) => {
+    assertTrustedSender(event);
+    if (!input || typeof input !== 'object' || !input.productName || !Array.isArray(input.assets) || !Array.isArray(input.selectedAccountIds)) throw new Error('产品确认参数不完整。');
+    const currentAccounts = storage.listAccounts(database);
+    const snapshotIds = (input.accountSnapshots ?? []).map((account) => account.account_id).sort();
+    const selectedIds = [...input.selectedAccountIds].sort();
+    if (snapshotIds.join('|') !== selectedIds.join('|')) throw new Error('账号选择已变化，请重新读取并确认账号。');
+    const windows = (await bitBrowserClient.listWindows({ baseUrl: DEFAULT_BASE_URL })).windows;
+    for (const snapshot of input.accountSnapshots ?? []) {
+      const window = windows.find((item) => item.window_id === snapshot.bit_window_id && item.is_open);
+      if (!window) throw new Error(`账号窗口已关闭：${snapshot.window_name || snapshot.bit_window_id}`);
+      let endpoint = activeCdpEndpoints.get(window.window_id);
+      if (!endpoint) { const opened = await bitBrowserClient.openWindow({ baseUrl: DEFAULT_BASE_URL, windowId: window.window_id }); endpoint = opened.cdp_endpoint; activeCdpEndpoints.set(window.window_id, endpoint); }
+      const live = await accountBoardService.syncBoards({ bitWindowId: window.window_id, windowName: window.window_name, cdpEndpoint: endpoint });
+      if (live.account.account_id !== snapshot.account_id) throw new Error(`账号窗口已切换账号：${window.window_name}`);
+    }
+    currentAccounts = storage.listAccounts(database);
+    const currentById = new Map(currentAccounts.map((account) => [account.account_id, account]));
+    const snapshotMap = new Map((input.accountSnapshots ?? []).map((account) => [account.account_id, account]));
+    for (const snapshot of input.accountSnapshots ?? []) {
+      const current = currentById.get(snapshot.account_id);
+      if (!current || current.bit_window_id !== snapshot.bit_window_id || current.pinterest_username !== snapshot.pinterest_username || current.pinterest_profile_url !== snapshot.pinterest_profile_url) throw new Error('账号在预览后发生变化，请重新读取账号。');
+    }
+    const accounts = currentAccounts.filter((account) => input.selectedAccountIds.includes(account.account_id));
+    const assets = input.folderPath ? await require('../src/import/product-folder').scanProductFolder(input.folderPath, { hashCache: storage.getProductAssetHashCache(database) }) : null;
+    if (!assets) throw new Error('确认时必须重新提供产品文件夹。');
+    const previewAssets = Array.isArray(input.assets) ? input.assets : [];
+    const previewAssetKey = (asset) => `${asset.relative_path}:${asset.asset_hash}:${asset.file_size}:${asset.modified_at}`;
+    const previewKeys = new Set(previewAssets.map(previewAssetKey));
+    if (assets.length !== previewAssets.length || assets.some((asset) => !previewKeys.has(previewAssetKey(asset)))) throw new Error('视频文件在预览后发生变化，请重新扫描。');
+    const boardsByAccount = new Map(accounts.map((account) => [account.account_id, storage.getBoards(database, account.account_id)]));
+    const preview = buildProductPreview({ ...input, assets: await assets, accounts, boardsByAccount, existingHashes: storage.getProductAssetHashes(database, input.selectedAccountIds) });
+    if (preview.errors.length) throw new Error(preview.errors.join(' '));
+    return storage.saveProductRun(database, preview);
+  });
+  ipcMain.handle('product:release-lock', (event, input) => {
+    assertTrustedSender(event);
+    if (!input || typeof input.accountId !== 'string' || typeof input.assetHash !== 'string' || typeof input.productId !== 'string' || input.reason !== 'pre_publish_failed') throw new Error('锁参数不正确。');
+    return { released: storage.releasePublicationLock(database, input) };
   });
 }
 

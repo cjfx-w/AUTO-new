@@ -124,7 +124,7 @@ class SingleTaskDryRunService {
         await this.step(attempt, page, 'video_uploaded');
         await this.fillFirst(page, [/title|标题/i], item.title, '标题');
         await this.fillFirst(page, [/description|描述/i], item.description, '描述');
-        await this.fillFirst(page, [/link|url|链接/i], item.product_url, '产品链接');
+        if (item.product_url) await this.fillFirst(page, [/link|url|链接/i], item.product_url, '产品链接');
         await this.step(attempt, page, 'content_filled');
         const finalBoard = page.locator('[aria-selected="true"], [data-selected="true"]').filter({ hasText: item.board });
         if (!(await finalBoard.count()) || !await this.selectedBoardMatchesUrl(finalBoard.first(), boardCheck.board.board_url, page)) throw new PinterestValidationError('BOARD_NOT_SELECTED', 'Publish 前未确认目标 Board。');
