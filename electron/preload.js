@@ -23,8 +23,15 @@ contextBridge.exposeInMainWorld('autoAPI', {
   dryRun: {
     start: (input) => ipcRenderer.invoke('dry-run:start', input)
   },
+  scheduler: {
+    start: (input) => ipcRenderer.invoke('scheduler:start', input),
+    stop: () => ipcRenderer.invoke('scheduler:stop'),
+    status: () => ipcRenderer.invoke('scheduler:status')
+  },
   product: {
-    listAccounts: () => ipcRenderer.invoke('product:accounts'),
+    chooseFolder: () => ipcRenderer.invoke('product:choose-folder'),
+    listSavedAccounts: () => ipcRenderer.invoke('product:saved-accounts'),
+    listAccounts: (input) => ipcRenderer.invoke('product:accounts', input),
     scanPreview: (input) => ipcRenderer.invoke('product:scan-preview', input),
     confirm: (input) => ipcRenderer.invoke('product:confirm', input),
     releaseLock: (input) => ipcRenderer.invoke('product:release-lock', input),

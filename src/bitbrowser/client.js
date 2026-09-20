@@ -38,13 +38,47 @@ function assertSuccess(payload, endpoint) {
 }
 
 function normalizeWindow(item) {
+  const rawOpenState = item?.opened ?? item?.isOpen ?? item?.open ?? item?.status ?? item?.state;
+  const normalizedOpenState = typeof rawOpenState === 'boolean'
+    ? rawOpenState
+    : typeof rawOpenState === 'number'
+      ? rawOpenState === 1
+      : ['open', 'opened', 'running', 'active', '1', 'true'].includes(String(rawOpenState ?? '').trim().toLowerCase());
   return {
     window_id: String(item?.id ?? item?.browserId ?? item?.browser_id ?? ''),
     window_name: String(item?.name ?? item?.browserName ?? item?.title ?? ''),
     remark: String(item?.remark ?? ''),
-    is_open: Boolean(item?.isOpen ?? item?.open ?? (item?.status === 1 || item?.status === 'open' || item?.status === 'opened')),
+    is_open: normalizedOpenState,
     seq: item?.seq ?? null
   };
+}
+
+function normalizePortEndpoint(value) {
+  const endpoint = value?.ws ?? value?.websocket ?? value?.webSocketDebuggerUrl ?? value?.http ?? value?.port ?? value;
+  if (typeof endpoint !== 'string' && typeof endpoint !== 'number') return null;
+  const text = String(endpoint).trim();
+  if (!text) return null;
+  if (/^\d+$/.test(text)) return `http://127.0.0.1:${text}`;
+  if (/^(?:https?|ws):\/\//i.test(text)) return text;
+  if (/^127\.0\.0\.1:\d+$/.test(text)) return `http://${text}`;
+  return null;
+}
+
+function normalizeOpenPortEntries(data) {
+  const rows = Array.isArray(data) ? data : (data?.list ?? data?.rows ?? data?.ports ?? null);
+  if (Array.isArray(rows)) {
+    return rows.map((item) => ({
+      window_id: String(item?.id ?? item?.browserId ?? item?.browser_id ?? ''),
+      cdp_endpoint: normalizePortEndpoint(item)
+    })).filter((item) => item.window_id && item.cdp_endpoint);
+  }
+  if (data && typeof data === 'object') {
+    return Object.entries(data).map(([windowId, value]) => ({
+      window_id: String(windowId),
+      cdp_endpoint: normalizePortEndpoint(value)
+    })).filter((item) => item.window_id && item.cdp_endpoint);
+  }
+  return [];
 }
 
 class BitBrowserClient {
@@ -52,9 +86,24 @@ class BitBrowserClient {
     this.fetch = options.fetch ?? globalThis.fetch;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.minRequestIntervalMs = options.minRequestIntervalMs ?? 50;
+    this.requestTail = Promise.resolve();
   }
 
   async request(baseUrl, endpoint, body = {}) {
+    const run = this.requestTail.then(async () => {
+      const waitMs = this.minRequestIntervalMs - (Date.now() - (this.lastRequestAt ?? 0));
+      if (waitMs > 0) await this.sleep(waitMs);
+      this.lastRequestAt = Date.now();
+      const result = await this.requestRaw(baseUrl, endpoint, body);
+      this.lastRequestAt = Date.now();
+      return result;
+    });
+    this.requestTail = run.catch(() => {});
+    return run;
+  }
+
+  async requestRaw(baseUrl, endpoint, body = {}) {
     const url = `${normalizeBaseUrl(baseUrl)}${endpoint}`;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
@@ -125,6 +174,12 @@ class BitBrowserClient {
     return { windows };
   }
 
+  async listOpenPorts(options = {}) {
+    const { baseUrl = DEFAULT_BASE_URL } = options;
+    const payload = await this.requestWithRetry(baseUrl, '/browser/ports', {});
+    return { endpoints: normalizeOpenPortEntries(extractData(payload)) };
+  }
+
   async openWindow(options = {}) {
     if (!options || typeof options !== 'object' || Array.isArray(options)) throw new BitBrowserError('INVALID_INPUT', '打开窗口参数不正确。');
     const { baseUrl = DEFAULT_BASE_URL, windowId } = options;
@@ -156,4 +211,4 @@ class BitBrowserClient {
   }
 }
 
-module.exports = { BitBrowserClient, DEFAULT_BASE_URL, MAX_PAGE_COUNT, MAX_ATTEMPT_COUNT, normalizeBaseUrl, normalizeWindow };
+module.exports = { BitBrowserClient, DEFAULT_BASE_URL, MAX_PAGE_COUNT, MAX_ATTEMPT_COUNT, normalizeBaseUrl, normalizeWindow, normalizeOpenPortEntries };

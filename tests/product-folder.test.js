@@ -15,6 +15,15 @@ test('scans arbitrary video names recursively and creates video x account tasks'
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+test('accepts an absolute folder path from the native directory picker', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'auto-native-folder-'));
+  fs.writeFileSync(path.join(root, 'product-video.mp4'), 'video');
+  const assets = await scanProductFolder(root);
+  assert.equal(path.isAbsolute(assets[0].file_path), true);
+  assert.equal(assets[0].relative_path, 'product-video.mp4');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
 test('rejects invalid product folder fields', () => {
   const result = buildProductPreview({ productName: '', title: '', description: '', productUrl: 'not-url', boardName: '', assets: [], accounts: [], selectedAccountIds: [] });
   assert.equal(result.errors.length >= 5, true);

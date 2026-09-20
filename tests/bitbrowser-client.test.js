@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { BitBrowserClient, normalizeBaseUrl, normalizeWindow } = require('../src/bitbrowser/client');
+const { BitBrowserClient, normalizeBaseUrl, normalizeWindow, normalizeOpenPortEntries } = require('../src/bitbrowser/client');
 
 function response(payload, status = 200) {
   return { ok: status >= 200 && status < 300, status, text: async () => JSON.stringify(payload) };
@@ -14,6 +14,12 @@ test('normalizes a local API address and window fields without sensitive fields'
   assert.deepEqual(normalizeWindow({ id: 'w1', name: '窗口 01', remark: 'demo', status: 1, password: 'x', cookie: 'secret' }), {
     window_id: 'w1', window_name: '窗口 01', remark: 'demo', is_open: true, seq: null
   });
+});
+
+test('recognizes all common open-state fields from BitBrowser', () => {
+  assert.equal(normalizeWindow({ id: 'w1', opened: true }).is_open, true);
+  assert.equal(normalizeWindow({ id: 'w2', state: 'running' }).is_open, true);
+  assert.equal(normalizeWindow({ id: 'w3', status: 'closed' }).is_open, false);
 });
 
 test('checks health and reads a paginated window list', async () => {
@@ -31,6 +37,27 @@ test('checks health and reads a paginated window list', async () => {
   assert.deepEqual(result.windows.map((item) => item.window_id), ['w1', 'w2']);
   assert.equal(calls[1].body.page, 0);
   assert.equal(calls[2].body.page, 1);
+});
+
+test('reads CDP endpoints for already-open windows without opening them', async () => {
+  const calls = [];
+  const client = new BitBrowserClient({
+    fetch: async (url, options) => {
+      calls.push(url);
+      assert.deepEqual(JSON.parse(options.body), {});
+      return response({ success: true, data: [{ id: 'w1', port: 9222 }] });
+    }
+  });
+  const result = await client.listOpenPorts();
+  assert.deepEqual(result.endpoints, [{ window_id: 'w1', cdp_endpoint: 'http://127.0.0.1:9222' }]);
+  assert.equal(calls[0].endsWith('/browser/ports'), true);
+});
+
+test('normalizes port maps returned by older BitBrowser versions', () => {
+  assert.deepEqual(normalizeOpenPortEntries({ w1: 9222, w2: '127.0.0.1:9333' }), [
+    { window_id: 'w1', cdp_endpoint: 'http://127.0.0.1:9222' },
+    { window_id: 'w2', cdp_endpoint: 'http://127.0.0.1:9333' }
+  ]);
 });
 
 test('supports ws and http endpoints returned by open', async () => {

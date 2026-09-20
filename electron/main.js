@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const { BitBrowserClient } = require('../src/bitbrowser/client');
@@ -7,6 +7,7 @@ const { PinterestAccountBoardService } = require('../src/pinterest/account-board
 const { buildImportPreview } = require('../src/import/batch-preview');
 const { scanProductFolder, buildProductPreview } = require('../src/import/product-folder');
 const { SingleTaskDryRunService } = require('../src/dry-run/single-task');
+const { AccountScheduler } = require('../src/scheduler/account-scheduler');
 const storage = require('../src/storage/database');
 
 let mainWindow;
@@ -14,6 +15,8 @@ let bitBrowserClient;
 let database;
 let accountBoardService;
 let dryRunService;
+let scheduler;
+let schedulerBaseUrl = DEFAULT_BASE_URL;
 const activeCdpEndpoints = new Map();
 
 function createWindow() {
@@ -32,6 +35,17 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, '..', 'auto.html'));
 }
 
+async function refreshOpenCdpEndpoints(baseUrl = DEFAULT_BASE_URL) {
+  try {
+    const result = await bitBrowserClient.listOpenPorts({ baseUrl });
+    activeCdpEndpoints.clear();
+    for (const endpoint of result.endpoints) activeCdpEndpoints.set(endpoint.window_id, endpoint.cdp_endpoint);
+    return result.endpoints;
+  } catch {
+    return [];
+  }
+}
+
 function registerIpc() {
   const assertTrustedSender = (event) => {
     if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error('不受信任的窗口请求。');
@@ -45,6 +59,7 @@ function registerIpc() {
     assertTrustedSender(event);
     if (input !== undefined && (!input || typeof input !== 'object' || Array.isArray(input))) throw new Error('窗口列表参数不正确。');
     const result = await bitBrowserClient.listWindows(input);
+    await refreshOpenCdpEndpoints(input?.baseUrl ?? DEFAULT_BASE_URL);
     storage.saveBitBrowserWindows(database, result.windows);
     return result;
   });
@@ -65,12 +80,14 @@ function registerIpc() {
   ipcMain.handle('account:identify', async (event, input) => {
     assertTrustedSender(event);
     const request = validateAccountWindowInput(input);
-    return accountBoardService.identifyAccount({ bitWindowId: request.windowId, ...request, cdpEndpoint: activeCdpEndpoints.get(request.windowId) });
+    const cdpEndpoint = activeCdpEndpoints.get(request.windowId) ?? (await refreshOpenCdpEndpoints(request.baseUrl)).find((item) => item.window_id === request.windowId)?.cdp_endpoint;
+    return accountBoardService.identifyAccount({ bitWindowId: request.windowId, ...request, cdpEndpoint });
   });
   ipcMain.handle('account:sync-boards', async (event, input) => {
     assertTrustedSender(event);
     const request = validateAccountWindowInput(input);
-    return accountBoardService.syncBoards({ bitWindowId: request.windowId, ...request, cdpEndpoint: activeCdpEndpoints.get(request.windowId) });
+    const cdpEndpoint = activeCdpEndpoints.get(request.windowId) ?? (await refreshOpenCdpEndpoints(request.baseUrl)).find((item) => item.window_id === request.windowId)?.cdp_endpoint;
+    return accountBoardService.syncBoards({ bitWindowId: request.windowId, ...request, cdpEndpoint });
   });
   ipcMain.handle('account:get-boards', (event, accountId) => {
     assertTrustedSender(event);
@@ -115,14 +132,42 @@ function registerIpc() {
     if (!input || typeof input !== 'object' || (typeof input.itemId !== 'string' && typeof input.taskId !== 'string') || typeof input.windowId !== 'string') throw new Error('预演参数不正确。');
     return dryRunService.run({ itemId: input.itemId, taskId: input.taskId, bitWindowId: input.windowId, allowCreateBoard: Boolean(input.allowCreateBoard), cdpEndpoint: activeCdpEndpoints.get(input.windowId) });
   });
-  ipcMain.handle('product:accounts', async (event) => {
+  ipcMain.handle('scheduler:start', async (event, input = {}) => {
+    assertTrustedSender(event);
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('调度参数不正确。');
+    schedulerBaseUrl = input.baseUrl || DEFAULT_BASE_URL;
+    if (input.maxConcurrent !== undefined) scheduler.setMaxConcurrent(Number(input.maxConcurrent));
+    await refreshOpenCdpEndpoints(schedulerBaseUrl);
+    const windows = (await bitBrowserClient.listWindows({ baseUrl: schedulerBaseUrl })).windows;
+    const openWindowIds = new Set(windows.filter((window) => window.is_open).map((window) => window.window_id));
+    const tasks = storage.listProductTasks(database).filter((task) => (task.status === 'ready' || task.status === 'queued') && openWindowIds.has(task.bit_window_id));
+    return scheduler.start(tasks);
+  });
+  ipcMain.handle('scheduler:stop', (event) => { assertTrustedSender(event); scheduler.stop(); return scheduler.status(); });
+  ipcMain.handle('scheduler:status', (event) => { assertTrustedSender(event); return scheduler.status(); });
+  ipcMain.handle('product:choose-folder', async (event) => {
+    assertTrustedSender(event);
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择产品视频文件夹',
+      properties: ['openDirectory']
+    });
+    return { canceled: result.canceled, folderPath: result.canceled ? null : result.filePaths[0] ?? null };
+  });
+  ipcMain.handle('product:saved-accounts', (event) => {
+    assertTrustedSender(event);
+    return storage.listAccounts(database);
+  });
+  ipcMain.handle('product:accounts', async (event, input = {}) => {
     assertTrustedSender(event);
     const discovered = [];
-    const windows = await bitBrowserClient.listWindows({ baseUrl: DEFAULT_BASE_URL });
+    if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('账号发现参数不正确。');
+    const baseUrl = typeof input.baseUrl === 'string' && input.baseUrl.trim() ? input.baseUrl.trim() : DEFAULT_BASE_URL;
+    const windows = await bitBrowserClient.listWindows({ baseUrl });
+    await refreshOpenCdpEndpoints(baseUrl);
     for (const item of windows.windows.filter((windowItem) => windowItem.is_open)) {
       try {
-        let endpoint = activeCdpEndpoints.get(item.window_id);
-        if (!endpoint) { const opened = await bitBrowserClient.openWindow({ baseUrl: DEFAULT_BASE_URL, windowId: item.window_id }); endpoint = opened.cdp_endpoint; activeCdpEndpoints.set(item.window_id, endpoint); }
+        const endpoint = activeCdpEndpoints.get(item.window_id);
+        if (!endpoint) throw new Error('窗口已打开，但没有读取到远程调试地址。');
         const result = await accountBoardService.syncBoards({ bitWindowId: item.window_id, windowName: item.window_name, cdpEndpoint: endpoint });
         discovered.push(result.account);
       } catch (error) { discovered.push({ bit_window_id: item.window_id, window_name: item.window_name, verification_state: 'unavailable', error: error.message }); }
@@ -147,12 +192,14 @@ function registerIpc() {
     const snapshotIds = (input.accountSnapshots ?? []).map((account) => account.account_id).sort();
     const selectedIds = [...input.selectedAccountIds].sort();
     if (snapshotIds.join('|') !== selectedIds.join('|')) throw new Error('账号选择已变化，请重新读取并确认账号。');
-    const windows = (await bitBrowserClient.listWindows({ baseUrl: DEFAULT_BASE_URL })).windows;
+    const baseUrl = input.baseUrl || DEFAULT_BASE_URL;
+    const windows = (await bitBrowserClient.listWindows({ baseUrl })).windows;
+    await refreshOpenCdpEndpoints(baseUrl);
     for (const snapshot of input.accountSnapshots ?? []) {
       const window = windows.find((item) => item.window_id === snapshot.bit_window_id && item.is_open);
       if (!window) throw new Error(`账号窗口已关闭：${snapshot.window_name || snapshot.bit_window_id}`);
-      let endpoint = activeCdpEndpoints.get(window.window_id);
-      if (!endpoint) { const opened = await bitBrowserClient.openWindow({ baseUrl: DEFAULT_BASE_URL, windowId: window.window_id }); endpoint = opened.cdp_endpoint; activeCdpEndpoints.set(window.window_id, endpoint); }
+      const endpoint = activeCdpEndpoints.get(window.window_id);
+      if (!endpoint) throw new Error(`窗口已打开，但无法获取远程调试地址：${window.window_name || window.window_id}`);
       const live = await accountBoardService.syncBoards({ bitWindowId: window.window_id, windowName: window.window_name, cdpEndpoint: endpoint });
       if (live.account.account_id !== snapshot.account_id) throw new Error(`账号窗口已切换账号：${window.window_name}`);
     }
@@ -192,7 +239,7 @@ function validateAccountWindowInput(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.windowId !== 'string' || !input.windowId.trim()) {
     throw new Error('窗口参数不正确。');
   }
-  return { windowId: input.windowId, windowName: typeof input.windowName === 'string' ? input.windowName : '' };
+  return { windowId: input.windowId, windowName: typeof input.windowName === 'string' ? input.windowName : '', baseUrl: typeof input.baseUrl === 'string' && input.baseUrl.trim() ? input.baseUrl.trim() : DEFAULT_BASE_URL };
 }
 
 app.whenReady().then(() => {
@@ -229,6 +276,36 @@ app.whenReady().then(() => {
     },
     screenshotDir: path.join(userDataPath, 'diagnostics', 'phase-04')
   });
+  scheduler = new AccountScheduler({
+    storage: {
+      acquireSchedulerLeases: (input) => storage.acquireSchedulerLeases(database, input),
+      releaseSchedulerLeases: (input) => storage.releaseSchedulerLeases(database, input),
+      updateScheduledTask: (taskId, status, error) => storage.updateScheduledTask(database, taskId, status, error),
+      heartbeatSchedulerLeases: (input) => storage.heartbeatSchedulerLeases(database, input),
+      listBlockedAccounts: () => storage.listBlockedSchedulerAccounts(database),
+      blockAccount: (accountId, reason) => storage.blockSchedulerAccount(database, accountId, reason)
+    },
+    maxConcurrent: 2,
+    worker: async (task) => {
+      const baseUrl = schedulerBaseUrl;
+      const windows = (await bitBrowserClient.listWindows({ baseUrl })).windows;
+      const window = windows.find((item) => item.window_id === task.bit_window_id);
+      const endpoints = await refreshOpenCdpEndpoints(baseUrl);
+      const cdpEndpoint = endpoints.find((item) => item.window_id === task.bit_window_id)?.cdp_endpoint;
+      if (!window?.is_open) {
+        const error = new Error('BitBrowser 窗口已关闭，任务已暂停。');
+        error.code = 'WINDOW_UNAVAILABLE';
+        throw error;
+      }
+      if (!cdpEndpoint) {
+        const error = new Error('已打开窗口没有可用的 CDP 连接，请检查 BitBrowser /browser/ports。');
+        error.code = 'WINDOW_UNAVAILABLE';
+        throw error;
+      }
+      return dryRunService.run({ taskId: task.task_id, bitWindowId: task.bit_window_id, cdpEndpoint });
+    }
+  });
+  storage.recoverSchedulerState(database);
   registerIpc();
   createWindow();
 

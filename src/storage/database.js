@@ -131,6 +131,8 @@ function initDatabase(filename) {
       relative_path TEXT NOT NULL DEFAULT '',
       content_version TEXT NOT NULL DEFAULT 'v1',
       status TEXT NOT NULL DEFAULT 'ready',
+      last_error_code TEXT,
+      last_error_message TEXT,
       created_at TEXT NOT NULL,
       FOREIGN KEY (product_id) REFERENCES products(product_id),
       FOREIGN KEY (asset_id) REFERENCES product_assets(asset_id)
@@ -144,10 +146,28 @@ function initDatabase(filename) {
       owner_product_id TEXT,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (platform, account_id, asset_hash)
+    );
+    CREATE TABLE IF NOT EXISTS scheduler_leases (
+      lease_key TEXT PRIMARY KEY,
+      lease_type TEXT NOT NULL,
+      owner_run_id TEXT NOT NULL,
+      account_id TEXT,
+      bit_window_id TEXT,
+      acquired_at TEXT NOT NULL,
+      heartbeat_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS scheduler_blocked_accounts (
+      account_id TEXT PRIMARY KEY,
+      reason TEXT NOT NULL,
+      blocked_at TEXT NOT NULL
     )
   `);
   const columns = db.prepare('PRAGMA table_info(dry_run_attempts)').all().map((column) => column.name);
   if (!columns.includes('task_id')) db.exec('ALTER TABLE dry_run_attempts ADD COLUMN task_id TEXT');
+  const taskColumns = db.prepare('PRAGMA table_info(product_tasks)').all().map((column) => column.name);
+  if (!taskColumns.includes('last_error_code')) db.exec('ALTER TABLE product_tasks ADD COLUMN last_error_code TEXT');
+  if (!taskColumns.includes('last_error_message')) db.exec('ALTER TABLE product_tasks ADD COLUMN last_error_message TEXT');
   db.pragma('foreign_keys = ON');
   return db;
 }
@@ -406,7 +426,7 @@ function getConfirmedImportItem(db, itemId) {
 }
 
 function getDryRunTask(db, { taskId, itemId }) {
-  if (taskId) return db.prepare("SELECT t.task_id, t.product_id, t.product_name, t.asset_id, a.asset_hash, a.file_path, t.title, t.description, t.product_url, t.account_id, t.bit_window_id, t.board_name AS board, t.board_id, t.board_url, t.status FROM product_tasks t JOIN product_assets a ON a.asset_id = t.asset_id WHERE t.task_id = ? AND t.status = 'ready'").get(taskId) ?? null;
+  if (taskId) return db.prepare("SELECT t.task_id, t.product_id, t.product_name, t.asset_id, a.asset_hash, a.file_path, t.title, t.description, t.product_url, t.account_id, t.bit_window_id, t.board_name AS board, t.board_id, t.board_url, t.status FROM product_tasks t JOIN product_assets a ON a.asset_id = t.asset_id WHERE t.task_id = ? AND t.status IN ('ready', 'queued', 'running')").get(taskId) ?? null;
   return getConfirmedImportItem(db, itemId);
 }
 
@@ -464,14 +484,73 @@ function saveProductRun(db, preview) {
   return save();
 }
 
-function listProductTasks(db, productId) {
-  return db.prepare('SELECT * FROM product_tasks WHERE product_id = ? ORDER BY created_at, task_id').all(productId);
+function listProductTasks(db, productId = null) {
+  if (productId) return db.prepare('SELECT * FROM product_tasks WHERE product_id = ? ORDER BY created_at, task_id').all(productId);
+  return db.prepare('SELECT * FROM product_tasks ORDER BY created_at, task_id').all();
+}
+
+function listBlockedSchedulerAccounts(db) {
+  return db.prepare('SELECT account_id FROM scheduler_blocked_accounts ORDER BY blocked_at').all().map((row) => row.account_id);
+}
+
+function blockSchedulerAccount(db, accountId, reason = 'account_blocked') {
+  db.prepare('INSERT INTO scheduler_blocked_accounts (account_id, reason, blocked_at) VALUES (?, ?, ?) ON CONFLICT(account_id) DO UPDATE SET reason = excluded.reason, blocked_at = excluded.blocked_at').run(accountId, reason, new Date().toISOString());
 }
 
 function releasePublicationLock(db, { accountId, assetHash, productId }) {
   const owned = db.prepare("SELECT 1 FROM product_tasks WHERE product_id = ? AND account_id = ? AND asset_hash = ? AND status = 'ready' LIMIT 1").get(productId, accountId, assetHash);
   if (!owned) return false;
   return db.prepare("DELETE FROM publication_locks WHERE platform = 'pinterest' AND account_id = ? AND asset_hash = ? AND owner_product_id = ? AND state = 'reserved'").run(accountId, assetHash, productId).changes === 1;
+}
+
+function acquireSchedulerLeases(db, { ownerRunId, accountId, bitWindowId, maxConcurrent = 2, now }) {
+  const expires = new Date(Date.parse(now) + 30 * 60 * 1000).toISOString();
+  const acquire = db.transaction(() => {
+    db.prepare("DELETE FROM scheduler_leases WHERE julianday(expires_at) < julianday(?)").run(now);
+    for (const [type, value] of [['account', accountId], ['window', bitWindowId]]) {
+      const key = `${type}:${value}`;
+      if (db.prepare('SELECT 1 FROM scheduler_leases WHERE lease_key = ?').get(key)) return { acquired: false };
+    }
+    const slotCount = Math.max(1, Math.min(5, Number(maxConcurrent)));
+    let slot = null;
+    for (let index = 0; index < slotCount; index += 1) {
+      const key = `global_slot:${index}`;
+      if (!db.prepare('SELECT 1 FROM scheduler_leases WHERE lease_key = ?').get(key)) { slot = index; break; }
+    }
+    if (slot === null) return { acquired: false };
+    const rows = [
+      ['account', `account:${accountId}`, accountId, bitWindowId],
+      ['window', `window:${bitWindowId}`, accountId, bitWindowId],
+      ['global_slot', `global_slot:${slot}`, accountId, bitWindowId]
+    ];
+    for (const [type, key, leaseAccount, leaseWindow] of rows) db.prepare('INSERT INTO scheduler_leases (lease_key, lease_type, owner_run_id, account_id, bit_window_id, acquired_at, heartbeat_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(key, type, ownerRunId, leaseAccount, leaseWindow, now, now, expires);
+    return { acquired: true, slot };
+  });
+  return acquire();
+}
+
+function releaseSchedulerLeases(db, { ownerRunId, accountId, bitWindowId, slot }) {
+  db.prepare('DELETE FROM scheduler_leases WHERE owner_run_id = ? AND lease_key IN (?, ?, ?)').run(ownerRunId, `account:${accountId}`, `window:${bitWindowId}`, `global_slot:${slot ?? -1}`);
+}
+
+function heartbeatSchedulerLeases(db, { ownerRunId, now }) {
+  const expires = new Date(Date.parse(now) + 30 * 60 * 1000).toISOString();
+  return db.prepare('UPDATE scheduler_leases SET heartbeat_at = ?, expires_at = ? WHERE owner_run_id = ?').run(now, expires, ownerRunId).changes;
+}
+
+function recoverSchedulerState(db, now = new Date().toISOString()) {
+  const result = db.transaction(() => {
+    const expired = db.prepare("DELETE FROM scheduler_leases WHERE julianday(expires_at) < julianday(?)").run(now).changes;
+    const queued = db.prepare("UPDATE product_tasks SET status = 'queued' WHERE status = 'running'").run().changes;
+    return { expired_leases: expired, requeued_tasks: queued };
+  })();
+  return result;
+}
+
+function updateScheduledTask(db, taskId, status, errorMessage = null) {
+  const code = errorMessage?.code ?? null;
+  const message = typeof errorMessage === 'string' ? errorMessage : errorMessage?.message ?? null;
+  db.prepare('UPDATE product_tasks SET status = ?, last_error_code = ?, last_error_message = ? WHERE task_id = ?').run(status, code, message, taskId);
 }
 
 function createDryRunAttempt(db, { itemId, taskId, bitWindowId, accountId }) {
@@ -501,4 +580,4 @@ function failDryRunAttempt(db, attemptId, { code, message, pageUrl, screenshotPa
   db.prepare('UPDATE dry_run_attempts SET status = ?, current_step = ?, page_url = ?, last_screenshot_path = ?, error_code = ?, error_message = ?, updated_at = ? WHERE attempt_id = ?').run('failed', 'failed', pageUrl ?? null, screenshotPath ?? null, code, message, new Date().toISOString(), attemptId);
 }
 
-module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, updateProductTaskBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getDryRunTask, getAccountById, getProductAssetHashes, getProductAssetHashCache, saveProductRun, listProductTasks, releasePublicationLock, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };
+module.exports = { initDatabase, saveBitBrowserWindows, getAccountByWindow, getAccountSnapshot, saveAccountBinding, saveAccountAndBoards, markBoardSyncFailed, getBoards, saveCreatedBoard, saveCreatedBoardAndUpdateItem, updateImportItemBoard, updateProductTaskBoard, validateBoard, canonicalizeBoardQuery, listAccounts, listImportAssetHashes, saveImportPreview, updateImportItem, confirmImportBatch, getImportBatches, getConfirmedImportItem, getDryRunTask, getAccountById, getProductAssetHashes, getProductAssetHashCache, saveProductRun, listProductTasks, listBlockedSchedulerAccounts, blockSchedulerAccount, releasePublicationLock, acquireSchedulerLeases, releaseSchedulerLeases, heartbeatSchedulerLeases, recoverSchedulerState, updateScheduledTask, createDryRunAttempt, updateDryRunStep, finishDryRunAttempt, failDryRunAttempt };

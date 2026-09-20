@@ -1459,12 +1459,13 @@
 
         async function phase1IdentifyAccount(windowId) {
             if (!phase1CanUse() || phase1State.busy) return;
-            if (!phase1State.cdpEndpoints[windowId]) { toast('请先打开该 BitBrowser 窗口'); return; }
+            const windowItem = phase1State.windows.find((item) => item.window_id === windowId);
+            if (!windowItem?.is_open) { toast('请先打开该 BitBrowser 窗口'); return; }
             phase1State.busy = true;
             phase1State.error = '';
             try {
                 const item = phase1State.windows.find((windowItem) => windowItem.window_id === windowId);
-                const result = await window.autoAPI.accounts.identify({ windowId, windowName: item?.window_name ?? '' });
+                const result = await window.autoAPI.accounts.identify({ windowId, windowName: item?.window_name ?? '', baseUrl: phase1State.baseUrl });
                 phase1State.accounts[windowId] = { ...result.account };
                 toast(`已识别 Pinterest 账号：${result.account.pinterest_username}，请继续检查 Board`);
             } catch (error) {
@@ -1478,12 +1479,13 @@
 
         async function phase1SyncBoards(windowId) {
             if (!phase1CanUse() || phase1State.busy) return;
-            if (!phase1State.cdpEndpoints[windowId]) { toast('请先打开该 BitBrowser 窗口'); return; }
+            const windowItem = phase1State.windows.find((item) => item.window_id === windowId);
+            if (!windowItem?.is_open) { toast('请先打开该 BitBrowser 窗口'); return; }
             phase1State.busy = true;
             phase1State.error = '';
             try {
                 const item = phase1State.windows.find((windowItem) => windowItem.window_id === windowId);
-                const result = await window.autoAPI.accounts.syncBoards({ windowId, windowName: item?.window_name ?? '' });
+                const result = await window.autoAPI.accounts.syncBoards({ windowId, windowName: item?.window_name ?? '', baseUrl: phase1State.baseUrl });
                 phase1State.accounts[windowId] = { ...result.account, boards: result.boards };
                 toast(`已保存 ${result.boards.length} 个 Board 快照`);
             } catch (error) {
@@ -1503,9 +1505,10 @@
         home = phase2Home;
         const phase3State = { batches: [], errors: [], folderPath: '', busy: false };
         function phase3Escape(value) { return phase1Escape(value); }
-        function phase3ChooseFolder() {
-            const input = document.getElementById('folderInput');
-            if (input) input.click();
+        async function phase3ChooseFolder() {
+            if (!window.autoAPI?.product?.chooseFolder) { toast('当前桌面版不支持原生文件夹选择，请重启 AUTO'); return; }
+            const result = await window.autoAPI.product.chooseFolder();
+            if (!result?.canceled && result.folderPath) await phase3ImportFolder(result.folderPath);
         }
         async function phase3ImportFolder(folderPath) {
             if (!window.autoAPI?.imports || !folderPath || phase3State.busy) return;
@@ -1620,12 +1623,24 @@
         phase3LoadBatches().then(() => { if (page === 'home' || page === 'import') render(); });
     </script>
     <script>
-        const productState = { productName: '', title: '', description: '', productUrl: '', boardName: '', folderPath: '', assets: [], accounts: [], selectedAccountIds: [], errors: [], scanned: false, busy: false, result: null };
+        const productState = { productName: '', title: '', description: '', productUrl: '', boardName: '', folderPath: '', assets: [], accounts: [], selectedAccountIds: [], errors: [], scanned: false, busy: false, result: null, scheduler: { started: false, running: [], queued: 0 } };
         function productEscape(value) { return phase1Escape(value); }
-        function productChooseFolder() { document.getElementById('folderInput')?.click(); }
+        async function productChooseFolder() {
+            if (!window.autoAPI?.product?.chooseFolder) { toast('当前桌面版不支持原生文件夹选择，请重启 AUTO'); return; }
+            const result = await window.autoAPI.product.chooseFolder();
+            if (!result?.canceled && result.folderPath) await productScan(result.folderPath);
+        }
         async function productLoadAccounts() {
             if (!window.autoAPI?.product) return;
-            try { productState.accounts = (await window.autoAPI.product.listAccounts()).filter((account) => account.account_id && account.verification_state !== 'unavailable'); productState.selectedAccountIds = productState.accounts.map((account) => account.account_id); if (productState.folderPath) await productScan(productState.folderPath); else render(); } catch (error) { productState.errors = [error.message || '读取账号失败']; render(); }
+            try { productState.accounts = (await window.autoAPI.product.listAccounts({ baseUrl: phase1State.baseUrl })).filter((account) => account.account_id && account.verification_state !== 'unavailable'); productState.selectedAccountIds = productState.accounts.map((account) => account.account_id); if (productState.folderPath) await productScan(productState.folderPath); else render(); } catch (error) { productState.errors = [error.message || '读取账号失败']; render(); }
+        }
+        async function productLoadSavedAccounts() {
+            if (!window.autoAPI?.product?.listSavedAccounts) return;
+            try {
+                productState.accounts = (await window.autoAPI.product.listSavedAccounts()).filter((account) => account.account_id && account.verification_state !== 'unavailable');
+                productState.selectedAccountIds = productState.accounts.map((account) => account.account_id);
+                render();
+            } catch (error) { productState.errors = [error.message || '读取已识别账号失败']; render(); }
         }
         async function productScan(folderPath) {
             if (!folderPath || productState.busy) return;
@@ -1641,7 +1656,7 @@
         phase3ImportFolder = productScan;
         async function productConfirm() {
             if (!productState.result || productState.errors.length) { toast('请先处理产品信息或扫描错误'); return; }
-            try { const result = await window.autoAPI.product.confirm({ ...productState, assets: productState.assets, accountSnapshots: productState.result?.selected_accounts ?? [] }); toast(`已生成 ${result.task_count} 个待发布任务`); productState.result = { ...productState.result, ...result, confirmed: true }; render(); } catch (error) { toast(error.message || '保存产品任务失败'); }
+            try { const result = await window.autoAPI.product.confirm({ ...productState, baseUrl: phase1State.baseUrl, assets: productState.assets, accountSnapshots: productState.result?.selected_accounts ?? [] }); toast(`已生成 ${result.task_count} 个待发布任务`); productState.result = { ...productState.result, ...result, confirmed: true }; render(); } catch (error) { toast(error.message || '保存产品任务失败'); }
         }
         async function productTaskDryRun(taskId, windowId) {
             try {
@@ -1657,6 +1672,17 @@
                 toast(result.status === 'ready_before_publish' ? '预演成功，已停在 Publish 前' : '预演已停止');
             } catch (error) { toast(error.message || '产品任务预演失败'); }
         }
+        async function productRefreshScheduler() {
+            try { productState.scheduler = await window.autoAPI.scheduler.status(); render(); } catch (error) { toast(error.message || '读取调度状态失败'); }
+        }
+        async function productStartScheduler() {
+            try { productState.scheduler = await window.autoAPI.scheduler.start({ baseUrl: phase1State.baseUrl, maxConcurrent: 2 }); toast('调度器已启动：同账号串行，不同账号最多并行 2 个'); render(); }
+            catch (error) { toast(error.message || '启动调度器失败'); }
+        }
+        async function productStopScheduler() {
+            try { productState.scheduler = await window.autoAPI.scheduler.stop(); toast('已停止领取新任务，当前任务会自然结束'); render(); }
+            catch (error) { toast(error.message || '停止调度器失败'); }
+        }
         function productPage() {
             const accountList = `${productState.accounts.length ? productState.accounts.map((account) => `<label style="display:flex;align-items:center;gap:8px;padding:8px 0"><input type="checkbox" ${productState.selectedAccountIds.includes(account.account_id) ? 'checked' : ''} onchange="productToggleAccount('${account.account_id}',this.checked)"><span>${productEscape(account.pinterest_username)} · ${productEscape(account.window_name)}</span></label>`).join('') : '<span class="emptyhint">请先在账号管理中识别 Pinterest 账号。</span>'}<button class="btn small" style="margin-top:8px" onclick="productLoadAccounts()">重新读取账号</button>`;
             const summary = productState.scanned ? `<div class="detail"><div class="detail-box"><small>视频数量</small><b>${productState.assets.length}</b></div><div class="detail-box"><small>选中账号</small><b>${productState.selectedAccountIds.length}</b></div><div class="detail-box"><small>预计任务</small><b>${productState.result?.task_count ?? 0}</b></div></div><div style="margin-top:12px;font-size:11px;color:var(--muted)">${productState.assets.slice(0,8).map((asset) => productEscape(asset.relative_path)).join(' · ')}</div>` : '<span class="emptyhint">选择文件夹后自动扫描视频。</span>';
@@ -1667,13 +1693,18 @@
         importPageV1 = productPage;
         const productBaseRender = render;
         render = () => { productBaseRender(); };
-        productLoadAccounts();
+        // Do not touch BitBrowser during AUTO startup. The operator explicitly
+        // starts account discovery from the product page after opening the
+        // desired BitBrowser windows.
+        productLoadSavedAccounts();
         const productRenderBase = render;
         render = () => {
             productRenderBase();
             if (page === 'import' && productState.result?.tasks?.length) {
                 const taskPanel = productState.result.tasks.map((task) => `<div class="feed-row"><div class="feed-info"><b>${productEscape(task.file_name)}</b><small>${productEscape(task.account_username || task.account_id)} · ${productEscape(task.board_name)}</small></div><button class="btn small" onclick="productTaskDryRun('${task.task_id}','${task.bit_window_id}')">单任务预演</button></div>`).join('');
-                document.getElementById('view').insertAdjacentHTML('beforeend', `<div class="card" style="margin-top:16px;padding:18px"><div class="card-head" style="padding:0 0 10px"><div><h3>已生成任务</h3><p>选择一个任务进入单账号单视频预演，仍不会点击 Publish。</p></div></div>${taskPanel}</div>`);
+                const scheduler = productState.scheduler;
+                const running = scheduler.running?.map((item) => `${productEscape(item.account_id)} · ${productEscape(item.bit_window_id)}`).join('、') || '无';
+                document.getElementById('view').insertAdjacentHTML('beforeend', `<div class="card" style="margin-top:16px;padding:18px"><div class="card-head" style="padding:0 0 10px"><div><h3>多账号调度</h3><p>只领取已确认的产品任务；复用已打开窗口，不会自动调用 /browser/open。</p></div><span class="status ${scheduler.started ? 'green' : 'yellow'}">${scheduler.started ? '处理中' : '等待中'}</span></div><div class="detail" style="margin-bottom:12px"><div class="detail-box"><small>运行任务</small><b>${scheduler.running?.length || 0}</b></div><div class="detail-box"><small>等待任务</small><b>${scheduler.queued || 0}</b></div><div class="detail-box"><small>当前租约</small><b>${running}</b></div></div><div style="display:flex;gap:8px;margin-bottom:14px"><button class="btn primary small" onclick="productStartScheduler()" ${scheduler.started ? 'disabled' : ''}>启动调度</button><button class="btn small" onclick="productStopScheduler()" ${scheduler.started ? '' : 'disabled'}>停止领取</button><button class="btn small" onclick="productRefreshScheduler()">刷新状态</button></div>${taskPanel}</div>`);
             }
         };
     </script>
