@@ -1644,7 +1644,18 @@
             try { const result = await window.autoAPI.product.confirm({ ...productState, assets: productState.assets, accountSnapshots: productState.result?.selected_accounts ?? [] }); toast(`已生成 ${result.task_count} 个待发布任务`); productState.result = { ...productState.result, ...result, confirmed: true }; render(); } catch (error) { toast(error.message || '保存产品任务失败'); }
         }
         async function productTaskDryRun(taskId, windowId) {
-            try { const result = await window.autoAPI.dryRun.start({ taskId, windowId, allowCreateBoard: false }); toast(result.status === 'ready_before_publish' ? '预演成功，已停在 Publish 前' : '预演已停止'); } catch (error) { toast(error.message || '产品任务预演失败'); }
+            try {
+                let result;
+                try { result = await window.autoAPI.dryRun.start({ taskId, windowId, allowCreateBoard: false }); }
+                catch (error) {
+                    const message = error?.message || '';
+                    if (error?.code !== 'BOARD_CREATION_CONFIRM_REQUIRED' && !/不存在 Board|是否创建/.test(message)) throw error;
+                    const task = productState.result?.tasks?.find((item) => item.task_id === taskId);
+                    if (!window.confirm(`当前账号不存在 Board“${task?.board_name || '目标 Board'}”，是否创建？`)) return;
+                    result = await window.autoAPI.dryRun.start({ taskId, windowId, allowCreateBoard: true });
+                }
+                toast(result.status === 'ready_before_publish' ? '预演成功，已停在 Publish 前' : '预演已停止');
+            } catch (error) { toast(error.message || '产品任务预演失败'); }
         }
         function productPage() {
             const accountList = `${productState.accounts.length ? productState.accounts.map((account) => `<label style="display:flex;align-items:center;gap:8px;padding:8px 0"><input type="checkbox" ${productState.selectedAccountIds.includes(account.account_id) ? 'checked' : ''} onchange="productToggleAccount('${account.account_id}',this.checked)"><span>${productEscape(account.pinterest_username)} · ${productEscape(account.window_name)}</span></label>`).join('') : '<span class="emptyhint">请先在账号管理中识别 Pinterest 账号。</span>'}<button class="btn small" style="margin-top:8px" onclick="productLoadAccounts()">重新读取账号</button>`;
